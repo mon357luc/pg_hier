@@ -1,7 +1,7 @@
 services:
   db:
     build: .
-    image: postgres-extensions:latest
+    image: sonnyland/postgres-extensions:latest
     container_name: postgres_container
     restart: always
     environment:
