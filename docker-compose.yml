@@ -1,6 +1,7 @@
 services:
   db:
-    image: postgres:latest
+    build: .
+    image: postgres-extensions:latest
     container_name: postgres_container
     restart: always
     environment:
@@ -11,6 +12,7 @@ services:
       - 5432:5432
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./FirstExtension:/docker-entrypoint-initdb.d/my_extension
 
 volumes:
   postgres_data:
