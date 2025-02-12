@@ -11,7 +11,7 @@ lint:
   stage: lint
   script:
     - echo "Running linter for C code..."
-    - cppcheck --enable=all --inconclusive --quiet --recursive .
+    - cppcheck --enable=all --inconclusive --quiet .
     - echo "Running linter for SQL code..."
     - sqlfluff lint sql/
 
