@@ -1,19 +1,15 @@
-Docker image to create environment suited for create postgres extensions.
+This repository has a docker-compose file that automatically pulls all extensoins into the postgres server for use.
 
 To start:
 ```
 
-C:\> cd path\to\git\repo\directory
-C:\path\to\git\repo\directory> docker image build
-C:\path\to\git\repo\directory> docker compose up -v
-C:\path\to\git\repo\directory> docker container exec -it postgres-container bash
-root@002c2207264f:/# cd docker-entrypoint-initdb.d/my_extension/
-root@002c2207264f:/docker-entrypoint-initdb.d/my_extension# make
-root@002c2207264f:/docker-entrypoint-initdb.d/my_extension# make install
+C:\path\to\git\repo\directory> docker compose up -d    # -d option to spin up the container detached
 
 ```
 
-In a sql client, call
+Then, in a SQL Client of your choice, connect to localhost:5432 using the DB and User defined in the .env file.
+
+Adding extensions to the database can be done with the following script:
 
 ```
 
