@@ -1,1 +1,8 @@
-.env 
+.env
+*.o
+*.so
+*.bc
+*.log
+*.swp
+*.tmp
+taxon.xml

@@ -1,0 +1,4 @@
+comment = 'Cool C Extension for PostgreSQL'
+default_version = '0.1'
+module_pathname = 'cool_c_ext'
+relocatable = true
