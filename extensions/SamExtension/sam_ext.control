@@ -1,0 +1,4 @@
+comment = 'sam test extension'
+default_version = '0.1'
+module_pathname = 'sam_ext'
+relocatable = true

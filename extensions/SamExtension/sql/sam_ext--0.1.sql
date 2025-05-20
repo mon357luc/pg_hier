@@ -1,0 +1,9 @@
+CREATE FUNCTION join(input_array text[]) 
+RETURNS text
+AS 'MODULE_PATHNAME', 'join'
+LANGUAGE C STRICT;
+
+CREATE FUNCTION sptrim(input text) 
+RETURNS text
+AS 'MODULE_PATHNAME', 'sptrim'
+LANGUAGE C STRICT;
