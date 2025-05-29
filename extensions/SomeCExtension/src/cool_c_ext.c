@@ -12,6 +12,9 @@ Datum csvify_ffunc(PG_FUNCTION_ARGS);
 typedef struct CsvifyState
 {
     StringInfoData buf;
+    unsigned int entries_returned_so_far;
+    unsigned int entries_to_return;
+    int is_done;
 } CsvifyState;
 
 PG_FUNCTION_INFO_V1(hello_world);
@@ -119,18 +122,25 @@ if (PG_ARGISNULL(0)) {
     MemoryContext oldctx = MemoryContextSwitchTo(aggctx);
     state = (CsvifyState *) palloc0(sizeof(CsvifyState));
     initStringInfo(&state->buf);
+    // get page dimensions from the rightmost arguments
+    // TODO ensure PG_NARGS() is large enough to do this subtraction
+    state->entries_to_return = PG_GETARG_DATUM(PG_NARGS() - 1);
+    state->entries_returned_so_far = 0;
+    state->is_done = 0;
     MemoryContextSwitchTo(oldctx);
 } else {
     // Subsequent calls: retrieve existing state
     state = (CsvifyState *) PG_GETARG_POINTER(0);
+    if (state->is_done || state->entries_returned_so_far >= state->entries_to_return) {
+        PG_RETURN_POINTER(state);
+    }
 }
-
 
     if (state->buf.len > 0) {
         appendStringInfoChar(&state->buf, '\n');
     }
 
-    for (int i = 1; i < PG_NARGS(); i++) {
+    for (int i = 1; i < PG_NARGS() - 1; i++) {
         if (i > 1) appendStringInfoChar(&state->buf, ',');
 
         if (PG_ARGISNULL(i)) {
@@ -145,6 +155,7 @@ if (PG_ARGISNULL(0)) {
         }
     }
 
+    state->entries_returned_so_far += 1;
     PG_RETURN_POINTER(state);
 }
 
