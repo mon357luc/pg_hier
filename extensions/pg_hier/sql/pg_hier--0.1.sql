@@ -1,7 +1,7 @@
-CREATE TABLE IF NOT EXISTS pg_hier (
+CREATE TABLE IF NOT EXISTS pg_hier_table (
     id SERIAL PRIMARY KEY,
-    parent_id INT REFERENCES pg_hier(id),
-    child_id INT REFERENCES pg_hier(id),
+    parent_id INT REFERENCES pg_hier_table(id),
+    child_id INT REFERENCES pg_hier_table(id),
     level INT,
     name TEXT,
     parent_key TEXT,
@@ -9,10 +9,10 @@ CREATE TABLE IF NOT EXISTS pg_hier (
 );
 
 -- Create an index on the parent_id and child_id columns for faster lookups
-CREATE INDEX IF NOT EXISTS idx_pg_hier_parent ON pg_hier(parent_id);
-CREATE INDEX IF NOT EXISTS idx_pg_hier_child ON pg_hier(child_id);
+CREATE INDEX IF NOT EXISTS idx_pg_hier_table_parent ON pg_hier_table(parent_id);
+CREATE INDEX IF NOT EXISTS idx_pg_hier_table_child ON pg_hier_table(child_id);
 -- Create a unique index to prevent duplicate parent-child relationships
-CREATE UNIQUE INDEX IF NOT EXISTS idx_pg_hier_unique ON pg_hier(parent_id, child_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pg_hier_table_unique ON pg_hier_table(parent_id, child_id);
 
 -- Create a function to insert a new hierarchy entry
 CREATE OR REPLACE FUNCTION insert_hierarchy_entry(
@@ -24,7 +24,7 @@ CREATE OR REPLACE FUNCTION insert_hierarchy_entry(
     p_child_key TEXT
 ) RETURNS VOID AS $$
 BEGIN
-    INSERT INTO pg_hier (parent_id, child_id, level, name, parent_key, child_key)
+    INSERT INTO pg_hier_table (parent_id, child_id, level, name, parent_key, child_key)
     VALUES (p_parent_id, p_child_id, p_level, p_name, p_parent_key, p_child_key);
 END;
 $$ LANGUAGE plpgsql;
@@ -43,7 +43,7 @@ RETURNS TABLE (
 BEGIN
     RETURN QUERY
     SELECT id, parent_id, child_id, level, name, parent_key, child_key
-    FROM pg_hier
+    FROM pg_hier_table
     WHERE parent_id = p_parent_id;
 END;
 
@@ -61,7 +61,7 @@ RETURNS TABLE (
 BEGIN
     RETURN QUERY
     SELECT id, parent_id, child_id, level, name, parent_key, child_key
-    FROM pg_hier
+    FROM pg_hier_table
     WHERE child_id = p_child_id;
 END;
 $$ LANGUAGE plpgsql;
@@ -70,7 +70,47 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION delete_hierarchy_entry(p_id INT)
 RETURNS VOID AS $$
 BEGIN
-    DELETE FROM pg_hier
+    DELETE FROM pg_hier_table
     WHERE id = p_id;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION pg_hier_join(parent_name regclass, child_name regclass)
+RETURNS SETOF RECORD AS
+$$
+DECLARE
+    join_sql text;
+    path_names text[];
+    path_keys text[];
+    i int;
+    rec record;
+BEGIN
+    WITH RECURSIVE path AS (
+        SELECT id, name, parent_id, child_id, parent_key, child_key
+        FROM pg_hier_table
+        WHERE name = parent_name::text
+        UNION ALL
+        SELECT h.id, h.name, h.parent_id, h.child_id, h.parent_key, h.child_key
+        FROM pg_hier_table h
+        JOIN path p ON h.id = p.child_id
+    )
+    SELECT array_agg(name ORDER BY id), array_agg(parent_key || ':' || child_key ORDER BY id)
+    INTO path_names, path_keys
+    FROM path
+    WHERE name = child_name OR name = parent_name;
+
+    IF path_names IS NULL OR array_length(path_names, 1) < 2 THEN
+        RAISE EXCEPTION 'No path found from % to %', parent_name, child_name;
+    END IF;
+
+    join_sql := 'SELECT * FROM ' || quote_ident(path_names[1]);
+    FOR i IN 2 .. array_length(path_names, 1) LOOP
+        -- Extract join keys
+        join_sql := join_sql || ' JOIN ' || quote_ident(path_names[i]) ||
+            ' ON ' || quote_ident(path_names[i-1]) || '.' || split_part(path_keys[i-1], ':', 1) ||
+            ' = ' || quote_ident(path_names[i]) || '.' || split_part(path_keys[i-1], ':', 2);
+    END LOOP;
+
+    RETURN QUERY (EXECUTE join_sql);
 END;
 $$ LANGUAGE plpgsql;

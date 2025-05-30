@@ -6,3 +6,5 @@
 #include "utils/builtins.h"
 #include "access/htup_details.h"
 #include "utils/typcache.h"
+#include "funcapi.h"
+#include "executor/spi.h"
