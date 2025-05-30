@@ -12,6 +12,8 @@ Datum csvify_ffunc(PG_FUNCTION_ARGS);
 typedef struct CsvifyState
 {
     StringInfoData buf;
+    unsigned int skipped_so_far;
+    unsigned int starting_point;
     unsigned int entries_returned_so_far;
     unsigned int entries_to_return;
     int is_done;
@@ -124,8 +126,10 @@ if (PG_ARGISNULL(0)) {
     initStringInfo(&state->buf);
     // get page dimensions from the rightmost arguments
     // TODO ensure PG_NARGS() is large enough to do this subtraction
+    state->starting_point = PG_GETARG_DATUM(PG_NARGS() - 2);
     state->entries_to_return = PG_GETARG_DATUM(PG_NARGS() - 1);
     state->entries_returned_so_far = 0;
+    state->skipped_so_far = 0;
     state->is_done = 0;
     MemoryContextSwitchTo(oldctx);
 } else {
@@ -136,11 +140,16 @@ if (PG_ARGISNULL(0)) {
     }
 }
 
+    if (state->starting_point > state->skipped_so_far) {
+        state->skipped_so_far++;
+        PG_RETURN_POINTER(state);
+    }
+
     if (state->buf.len > 0) {
         appendStringInfoChar(&state->buf, '\n');
     }
 
-    for (int i = 1; i < PG_NARGS() - 1; i++) {
+    for (int i = 1; i < PG_NARGS() - 2; i++) {
         if (i > 1) appendStringInfoChar(&state->buf, ',');
 
         if (PG_ARGISNULL(i)) {
