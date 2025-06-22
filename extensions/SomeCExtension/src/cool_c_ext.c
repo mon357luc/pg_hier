@@ -6,10 +6,10 @@ PG_MODULE_MAGIC;
 
 Datum hello_world(PG_FUNCTION_ARGS);
 Datum subq_csv(PG_FUNCTION_ARGS);
-Datum csvify_sfunc(PG_FUNCTION_ARGS);
-Datum csvify_ffunc(PG_FUNCTION_ARGS);
+Datum pg_hier_sfunc(PG_FUNCTION_ARGS);
+Datum pg_hier_ffunc(PG_FUNCTION_ARGS);
 
-typedef struct CsvifyState
+typedef struct pgHierState
 {
     StringInfoData buf;
     unsigned int skipped_so_far;
@@ -17,7 +17,7 @@ typedef struct CsvifyState
     unsigned int entries_returned_so_far;
     unsigned int entries_to_return;
     int is_done;
-} CsvifyState;
+} pgHierState;
 
 PG_FUNCTION_INFO_V1(hello_world);
 // SELECT hello_world(ARRAY['Hello', NULL, 'World']);
@@ -103,26 +103,26 @@ Datum subq_csv(PG_FUNCTION_ARGS)
     PG_RETURN_TEXT_P(cstring_to_text(buf.data));
 }
 
-PG_FUNCTION_INFO_V1(csvify_sfunc);
+PG_FUNCTION_INFO_V1(pg_hier_sfunc);
 
-Datum csvify_sfunc(PG_FUNCTION_ARGS)
+Datum pg_hier_sfunc(PG_FUNCTION_ARGS)
 {
-    CsvifyState *state;
+    pgHierState *state;
 
     MemoryContext aggctx = NULL;
 #if PG_VERSION_NUM >= 90600
     if (!AggCheckCallContext(fcinfo, &aggctx))
-        elog(ERROR, "csvify_sfunc called in non-aggregate context");
+        elog(ERROR, "pg_hier_sfunc called in non-aggregate context");
 #else
     aggctx = ((AggState *) fcinfo->context)->ss.ps.state->es_query_cxt;
     if (!aggctx)
-        elog(ERROR, "csvify_sfunc called in non-aggregate context");
+        elog(ERROR, "pg_hier_sfunc called in non-aggregate context");
 #endif
 
 if (PG_ARGISNULL(0)) {
     // First call: allocate and initialize state in aggregate context
     MemoryContext oldctx = MemoryContextSwitchTo(aggctx);
-    state = (CsvifyState *) palloc0(sizeof(CsvifyState));
+    state = (pgHierState *) palloc0(sizeof(pgHierState));
     initStringInfo(&state->buf);
     // get page dimensions from the rightmost arguments
     // TODO ensure PG_NARGS() is large enough to do this subtraction
@@ -134,7 +134,7 @@ if (PG_ARGISNULL(0)) {
     MemoryContextSwitchTo(oldctx);
 } else {
     // Subsequent calls: retrieve existing state
-    state = (CsvifyState *) PG_GETARG_POINTER(0);
+    state = (pgHierState *) PG_GETARG_POINTER(0);
     if (state->is_done || state->entries_returned_so_far >= state->entries_to_return) {
         PG_RETURN_POINTER(state);
     }
@@ -146,7 +146,7 @@ if (PG_ARGISNULL(0)) {
     }
 
     if (state->buf.len > 0) {
-        appendStringInfoChar(&state->buf, '\n');
+        appendStringInfoChar(&state->buf, '\t');
     }
 
     for (int i = 1; i < PG_NARGS() - 2; i++) {
@@ -168,12 +168,12 @@ if (PG_ARGISNULL(0)) {
     PG_RETURN_POINTER(state);
 }
 
-PG_FUNCTION_INFO_V1(csvify_ffunc);
-// SELECT col1, csvify(col2, col3) FROM my_table GROUP BY col1;
+PG_FUNCTION_INFO_V1(pg_hier_ffunc);
+// SELECT col1, pg_hier(col2, col3) FROM my_table GROUP BY col1;
 
-Datum csvify_ffunc(PG_FUNCTION_ARGS)
+Datum pg_hier_ffunc(PG_FUNCTION_ARGS)
 {
-    CsvifyState *state = (CsvifyState *) PG_GETARG_POINTER(0);
+    pgHierState *state = (pgHierState *) PG_GETARG_POINTER(0);
     char *result = pstrdup(state->buf.data);
 
     pfree(state->buf.data);

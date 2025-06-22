@@ -9,18 +9,18 @@ RETURNS text
 AS 'MODULE_PATHNAME', 'subq_csv'
 LANGUAGE C STRICT;
 
-CREATE FUNCTION csvify_sfunc(INTERNAL, VARIADIC "any")
+CREATE FUNCTION pg_hier_sfunc(INTERNAL, VARIADIC "any")
 RETURNS INTERNAL
-AS 'MODULE_PATHNAME', 'csvify_sfunc'
+AS 'MODULE_PATHNAME', 'pg_hier_sfunc'
 LANGUAGE C IMMUTABLE;
 
-CREATE FUNCTION csvify_ffunc(INTERNAL)
+CREATE FUNCTION pg_hier_ffunc(INTERNAL)
 RETURNS text
-AS 'MODULE_PATHNAME', 'csvify_ffunc'
+AS 'MODULE_PATHNAME', 'pg_hier_ffunc'
 LANGUAGE C IMMUTABLE;
 
-CREATE AGGREGATE csvify (VARIADIC "any") (
-    SFUNC = csvify_sfunc,
+CREATE AGGREGATE pg_hier (VARIADIC "any") (
+    SFUNC = pg_hier_sfunc,
     STYPE = INTERNAL,
-    FINALFUNC = csvify_ffunc
+    FINALFUNC = pg_hier_ffunc
 );
