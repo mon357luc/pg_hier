@@ -9,7 +9,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Ensure the permissions for the postgres user
-RUN chown -R postgres:postgres /usr/share/postgresql /docker-entrypoint-initdb.d
+RUN chown -R postgres:postgres /usr/share/postgresql /usr/share/doc /usr/lib/postgresql
 
-# Switch back to postgres user to run PostgreSQL
+# Switch to postgres user
 USER postgres

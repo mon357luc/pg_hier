@@ -12,7 +12,8 @@ services:
       - 5432:5432
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./extensions:/docker-entrypoint-initdb.d
+      - ./extensions:/extensions_src
+      - ./extensions/install-extensions.sh:/docker-entrypoint-initdb.d/install-extensions.sh:ro
 
 volumes:
   postgres_data:
