@@ -1,3 +1,8 @@
+CREATE FUNCTION compile_check()
+RETURNS text
+AS 'MODULE_PATHNAME', 'compile_check'
+LANGUAGE C STRICT;
+
 /* aggregate wrapper */
 CREATE FUNCTION hierify_sfunc(internal, VARIADIC "any")
 RETURNS internal

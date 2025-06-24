@@ -20,6 +20,13 @@ type_name(Oid typid)
  *  1)  header  (non-aggregate)
  *      SELECT hier_header(int4, text, timestamptz);
  * ===================================================================*/
+PG_FUNCTION_INFO_V1(compile_check);
+
+Datum compile_check(PG_FUNCTION_ARGS)
+{
+    PG_RETURN_TEXT_P(cstring_to_text("Check 1"));
+}
+
 PG_FUNCTION_INFO_V1(hier_header);
 
 Datum
@@ -85,7 +92,7 @@ hierify_sfunc(PG_FUNCTION_ARGS)
      * ----------------------------------------------------------------*/
     state->rowno++;
     if (state->rowno > 1)
-        appendStringInfoChar(&state->buf, ' ');      /* gap between rows */
+        appendStringInfoChar(&state->buf, '\n');  /* new line for next row */
 
     appendStringInfo(&state->buf, "row%llu: { ",
                      (unsigned long long) state->rowno);
@@ -94,11 +101,10 @@ hierify_sfunc(PG_FUNCTION_ARGS)
     {
         if (i > 1) appendStringInfoString(&state->buf, ", ");
 
-        /* NULLs are printed empty (match your CSV behaviour) */
         if (PG_ARGISNULL(i))
         {
             appendStringInfo(&state->buf,
-                             "field%d: NULL", i);
+                             "\"field%d\": NULL", i);
         }
         else
         {
@@ -110,7 +116,7 @@ hierify_sfunc(PG_FUNCTION_ARGS)
             char *val = OidOutputFunctionCall(outFuncOid,
                                               PG_GETARG_DATUM(i));
             appendStringInfo(&state->buf,
-                             "field%d: %s", i, val);
+                             "\"field%d\": \"%s\"", i, val);
         }
     }
     appendStringInfoString(&state->buf, " }");
