@@ -1,5 +1,5 @@
 # Define the extension name (must match the .control file)
-EXTENSION = cool_c_ext
+EXTENSION = serialized_fun
 
 # Use MODULE_big for single shared library built from multiple source files
 MODULE_big = $(EXTENSION)
