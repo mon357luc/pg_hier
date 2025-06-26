@@ -193,8 +193,6 @@ BEGIN
         END IF;
     END LOOP;
 
-    RAISE NOTICE 'Join SQL: %', join_sql;
-
     -- Build the CSV rows
     EXECUTE format(
         'SELECT json_agg(t) FROM (%s) t',
