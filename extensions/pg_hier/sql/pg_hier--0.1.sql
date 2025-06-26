@@ -1,79 +1,87 @@
 CREATE TABLE IF NOT EXISTS pg_hier_table (
     id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
     parent_id INT REFERENCES pg_hier_table(id),
+    parent_name TEXT, 
     child_id INT REFERENCES pg_hier_table(id),
     level INT,
-    name TEXT,
-    parent_key TEXT,
-    child_key TEXT
+    parent_key TEXT[],
+    child_key TEXT[]
 );
 
--- Create an index on the parent_id and child_id columns for faster lookups
 CREATE INDEX IF NOT EXISTS idx_pg_hier_table_parent ON pg_hier_table(parent_id);
 CREATE INDEX IF NOT EXISTS idx_pg_hier_table_child ON pg_hier_table(child_id);
--- Create a unique index to prevent duplicate parent-child relationships
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pg_hier_table_unique ON pg_hier_table(parent_id, child_id);
+CREATE INDEX IF NOT EXISTS idx_pg_hier_table_name ON pg_hier_table(name);
 
--- Create a function to insert a new hierarchy entry
-CREATE OR REPLACE FUNCTION insert_hierarchy_entry(
-    p_parent_id INT,
-    p_child_id INT,
-    p_level INT,
-    p_name TEXT,
-    p_parent_key TEXT,
-    p_child_key TEXT
-) RETURNS VOID AS $$
+CREATE OR REPLACE FUNCTION pg_hier_create_hier(
+    path_names text[],
+    parent_path_keys text[],
+    child_path_keys text[]
+)
+RETURNS VOID AS
+$$
+DECLARE
+    i INT;
+    curr_id INT;
+    v_parent_id INT;
+    v_child_id INT;
 BEGIN
-    INSERT INTO pg_hier_table (parent_id, child_id, level, name, parent_key, child_key)
-    VALUES (p_parent_id, p_child_id, p_level, p_name, p_parent_key, p_child_key);
+    IF array_length(path_names, 1) IS NULL OR array_length(path_names, 1) < 2 THEN
+        RAISE EXCEPTION 'Path names must contain at least two elements';
+    END IF;
+
+    IF array_length(path_names, 1) = array_length(parent_path_keys, 1) - 1 AND
+       array_length(path_names, 1) = array_length(child_path_keys, 1) - 1 THEN
+        child_path_keys := NULL::text || child_path_keys;
+        parent_path_keys := NULL::text || parent_path_keys;
+    END IF;
+
+    FOR i IN 1 .. array_length(path_names, 1) LOOP
+        INSERT INTO pg_hier_table (level, name, parent_key, child_key)
+        VALUES (
+            i,
+            path_names[i],
+            string_to_array(parent_path_keys[i], ':'),
+            string_to_array(child_path_keys[i], ':')
+        );
+    END LOOP;
+    FOR i IN 1 .. array_length(path_names, 1) LOOP
+        SELECT id INTO curr_id FROM pg_hier_table WHERE name = path_names[i] LIMIT 1;
+
+        IF i > 1 THEN
+            SELECT id INTO v_parent_id FROM pg_hier_table WHERE name = path_names[i-1] LIMIT 1;
+            UPDATE pg_hier_table SET parent_id = v_parent_id WHERE id = curr_id;
+        END IF;
+
+        IF i < array_length(path_names, 1) THEN
+            SELECT id INTO v_child_id FROM pg_hier_table WHERE name = path_names[i+1] LIMIT 1;
+            UPDATE pg_hier_table SET child_id = v_child_id WHERE id = curr_id;
+        END IF;
+    END LOOP;
 END;
 $$ LANGUAGE plpgsql;
 
--- Create a function to retrieve the hierarchy for a given parent_id
-CREATE OR REPLACE FUNCTION get_hierarchy_by_parent(p_parent_id INT)
-RETURNS TABLE (
-    id INT,
-    parent_id INT,
-    child_id INT,
-    level INT,
-    name TEXT,
-    parent_key TEXT,
-    child_key TEXT
-) AS $$
+--Helper function for pg_hier_join
+CREATE OR REPLACE FUNCTION pg_hier_make_key_step(parent_keys text[], child_keys text[])
+RETURNS text[] AS $$
 BEGIN
-    RETURN QUERY
-    SELECT id, parent_id, child_id, level, name, parent_key, child_key
-    FROM pg_hier_table
-    WHERE parent_id = p_parent_id;
+    IF parent_keys IS NULL OR array_length(parent_keys, 1) IS NULL THEN
+        RETURN '[]'::json[];
+    END IF;
+    RAISE NOTICE 'pg_hier_make_key_step: generate subscripts: %d', (SELECT COUNT(*) FROM generate_subscripts(parent_keys, 1));
+    RETURN ARRAY[
+        COALESCE(
+            to_json(
+                ARRAY(
+                    SELECT parent_keys[i]::text || ':' || child_keys[i]::text
+                    FROM generate_subscripts(parent_keys, 1) AS i
+                )
+            ), '[]'
+        )
+    ];
 END;
-
--- Create a function to retrieve the hierarchy for a given child_id
-CREATE OR REPLACE FUNCTION get_hierarchy_by_child(p_child_id INT)
-RETURNS TABLE (
-    id INT,
-    parent_id INT,
-    child_id INT,
-    level INT,
-    name TEXT,
-    parent_key TEXT,
-    child_key TEXT
-) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT id, parent_id, child_id, level, name, parent_key, child_key
-    FROM pg_hier_table
-    WHERE child_id = p_child_id;
-END;
-$$ LANGUAGE plpgsql;
-
--- Create a function to delete a hierarchy entry
-CREATE OR REPLACE FUNCTION delete_hierarchy_entry(p_id INT)
-RETURNS VOID AS $$
-BEGIN
-    DELETE FROM pg_hier_table
-    WHERE id = p_id;
-END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql IMMUTABLE STRICT;
 
 CREATE OR REPLACE FUNCTION pg_hier_join(v_parent_name regclass, v_child_name regclass)
 RETURNS TEXT AS
@@ -82,21 +90,30 @@ DECLARE
     join_sql text;
     path_names text[];
     path_keys text[];
+    key_group text[];
+    key_count int;
     i int;
+    k INT;
     col_list text;
     header text;
     json_result text;
 BEGIN
     WITH RECURSIVE path AS (
-        SELECT id, name, parent_id, child_id, parent_key, child_key,
-                ARRAY[name] AS name_path,
-                ARRAY[parent_key || ':' || child_key] AS key_path
+        SELECT 
+            id, name, parent_id, child_id, parent_key, child_key,
+            ARRAY[name] AS name_path,
+            COALESCE(pg_hier_make_key_step(parent_key, child_key), '{[]}') AS key_path, 
+            pg_typeof(pg_hier_make_key_step(parent_key, child_key)) AS ty1,
+            pg_typeof('') AS ty2
         FROM pg_hier_table
-        WHERE id = (SELECT id FROM pg_hier_table WHERE name = v_parent_name::text)
+        WHERE name = v_parent_name::text
         UNION ALL
-        SELECT h.id, h.name, h.parent_id, h.child_id, h.parent_key, h.child_key,
-                p.name_path || h.name,
-                p.key_path || (h.parent_key || ':' || h.child_key)
+        SELECT 
+            h.id, h.name, h.parent_id, h.child_id, h.parent_key, h.child_key,
+            p.name_path || h.name,
+            p.key_path || pg_hier_make_key_step(h.parent_key, h.child_key),
+            pg_typeof(pg_hier_make_key_step(h.parent_key, h.child_key)), 
+            pg_typeof(p.key_path)
         FROM pg_hier_table h
         JOIN path p ON h.parent_id = p.id
     )
@@ -125,16 +142,39 @@ BEGIN
         END IF;
     END LOOP;
 
-    RAISE NOTICE 'col_list: %', col_list;
+    -- Assume path_keys is text[][]
+
+    RAISE NOTICE 'path_names: %', path_names;
+    RAISE NOTICE 'path_keys: %', path_keys;
+
+    FOR i IN 1 .. array_length(path_keys, 1) LOOP
+        RAISE NOTICE 'path_keys[%] = %', i, path_keys[i];
+    END LOOP;
+
 
     join_sql := 'SELECT ' || col_list || ' FROM ' || quote_ident(path_names[1]);
     FOR i IN 2 .. array_length(path_names, 1) LOOP
-        join_sql := join_sql || ' JOIN ' || quote_ident(path_names[i]) ||
-            ' ON ' || quote_ident(path_names[i-1]) || '.' || split_part(path_keys[i], ':', 1) ||
-            ' = ' || quote_ident(path_names[i]) || '.' || split_part(path_keys[i], ':', 2);
+        SELECT array_agg(elem)
+        INTO key_group
+        FROM json_array_elements_text(path_keys[i]::json) AS elem;
+        key_count := coalesce(array_length(key_group, 1), 0);
+        join_sql := join_sql || ' JOIN ' || quote_ident(path_names[i]);
+        IF key_count > 0 THEN
+            join_sql := join_sql || ' ON ';
+
+            FOR k IN 1 .. key_count LOOP
+                IF k > 1 THEN 
+                    join_sql := join_sql || ' AND '; 
+                END IF;
+
+                join_sql := join_sql ||
+                    quote_ident(path_names[i-1]) || '.' || quote_ident(split_part(key_group[k], ':', 1)) ||
+                    ' = ' ||
+                    quote_ident(path_names[i]) || '.' || quote_ident(split_part(key_group[k], ':', 2));
+            END LOOP;
+        END IF;
     END LOOP;
 
-    RAISE NOTICE 'join_sql: %', join_sql;
 
     -- Build the CSV header
     header := '';
@@ -152,8 +192,6 @@ BEGIN
             header := header || ',';
         END IF;
     END LOOP;
-
-    RAISE NOTICE 'header: %', header;
 
     -- Build the CSV rows
     EXECUTE format(
