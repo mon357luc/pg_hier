@@ -63,13 +63,13 @@ END;
 $$ LANGUAGE plpgsql;
 
 --Helper function for pg_hier_join
-CREATE OR REPLACE FUNCTION make_key_step(parent_keys text[], child_keys text[])
+CREATE OR REPLACE FUNCTION pg_hier_make_key_step(parent_keys text[], child_keys text[])
 RETURNS text[] AS $$
 BEGIN
     IF parent_keys IS NULL OR array_length(parent_keys, 1) IS NULL THEN
         RETURN '[]'::json[];
     END IF;
-    RAISE NOTICE 'make_key_step: generate subscripts: %d', (SELECT COUNT(*) FROM generate_subscripts(parent_keys, 1));
+    RAISE NOTICE 'pg_hier_make_key_step: generate subscripts: %d', (SELECT COUNT(*) FROM generate_subscripts(parent_keys, 1));
     RETURN ARRAY[
         COALESCE(
             to_json(
@@ -102,8 +102,8 @@ BEGIN
         SELECT 
             id, name, parent_id, child_id, parent_key, child_key,
             ARRAY[name] AS name_path,
-            COALESCE(make_key_step(parent_key, child_key), '{[]}') AS key_path, 
-            pg_typeof(make_key_step(parent_key, child_key)) AS ty1,
+            COALESCE(pg_hier_make_key_step(parent_key, child_key), '{[]}') AS key_path, 
+            pg_typeof(pg_hier_make_key_step(parent_key, child_key)) AS ty1,
             pg_typeof('') AS ty2
         FROM pg_hier_table
         WHERE name = v_parent_name::text
@@ -111,8 +111,8 @@ BEGIN
         SELECT 
             h.id, h.name, h.parent_id, h.child_id, h.parent_key, h.child_key,
             p.name_path || h.name,
-            p.key_path || make_key_step(h.parent_key, h.child_key),
-            pg_typeof(make_key_step(h.parent_key, h.child_key)), 
+            p.key_path || pg_hier_make_key_step(h.parent_key, h.child_key),
+            pg_typeof(pg_hier_make_key_step(h.parent_key, h.child_key)), 
             pg_typeof(p.key_path)
         FROM pg_hier_table h
         JOIN path p ON h.parent_id = p.id
