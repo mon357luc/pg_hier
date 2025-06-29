@@ -8,3 +8,4 @@
 #include "utils/typcache.h"
 #include "funcapi.h"
 #include "executor/spi.h"
+#include "executor/executor.h"

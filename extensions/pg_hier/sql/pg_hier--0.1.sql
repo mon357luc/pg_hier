@@ -14,6 +14,11 @@ CREATE INDEX IF NOT EXISTS idx_pg_hier_table_child ON pg_hier_table(child_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pg_hier_table_unique ON pg_hier_table(parent_id, child_id);
 CREATE INDEX IF NOT EXISTS idx_pg_hier_table_name ON pg_hier_table(name);
 
+CREATE FUNCTION pg_hier_format(TEXT)
+RETURNS text
+AS 'MODULE_PATHNAME', 'pg_hier_format'
+LANGUAGE C STRICT;
+
 CREATE OR REPLACE FUNCTION pg_hier_create_hier(
     path_names text[],
     parent_path_keys text[],
@@ -194,10 +199,7 @@ BEGIN
     END LOOP;
 
     -- Build the CSV rows
-    EXECUTE format(
-        'SELECT json_agg(t) FROM (%s) t',
-        join_sql
-    ) INTO json_result;
+    json_result := pg_hier_format(join_sql);
 
     RETURN json_result;
 END;
