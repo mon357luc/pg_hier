@@ -1,0 +1,35 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "shell",
+            "label": "Build PostgreSQL Extension with MSVC",
+            "command": "cl.exe",
+            "args": [
+                "/Zi", // Enable debugging
+                "/EHsc", // Exception handling model
+                "/nologo", // Suppress the copyright message
+                "/I",
+                "C:/Program Files/PostgreSQL/17/include", // Include path for PostgreSQL headers
+                "/I",
+                "C:/Program Files/PostgreSQL/17/include/server", // Server header path
+                "/I",
+                "C:/Program Files/PostgreSQL/17/lib", // Library path for PostgreSQL libraries
+                "/Fe${fileDirname}/${fileBasenameNoExtension}.dll", // Output DLL file
+                "${file}", // The active file to compile
+                "libpq.lib" // Link PostgreSQL's libpq library
+            ],
+            "options": {
+                "cwd": "${fileDirname}"
+            },
+            "problemMatcher": [
+                "$msCompile"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "detail": "Build PostgreSQL extension with MSVC."
+        }
+    ]
+}
