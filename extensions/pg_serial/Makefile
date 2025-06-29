@@ -1,5 +1,5 @@
 # Define the extension name (must match the .control file)
-EXTENSION = serialized_fun
+EXTENSION = pg_serial
 
 # Use MODULE_big for single shared library built from multiple source files
 MODULE_big = $(EXTENSION)

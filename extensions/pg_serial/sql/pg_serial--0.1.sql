@@ -26,3 +26,8 @@ CREATE FUNCTION hier_header(VARIADIC "any")
 RETURNS text
 AS 'MODULE_PATHNAME', 'hier_header'
 LANGUAGE C STRICT;
+
+CREATE FUNCTION hierify_query(TEXT)
+RETURNS text
+AS 'MODULE_PATHNAME', 'hierify_query'
+LANGUAGE C STRICT;
