@@ -135,7 +135,7 @@ BEGIN
     FOR i IN 1 .. array_length(path_names, 1) LOOP
         col_list := col_list || (
             SELECT string_agg(
-                quote_ident(path_names[i]) || '.' || quote_ident(attname) || '::text AS ' || quote_ident(path_names[i] || '_' || attname),
+                quote_ident(path_names[i]) || '.' || quote_ident(attname) || ' AS ' || quote_ident(path_names[i] || '_' || attname),
                 ', '
             )
             FROM pg_attribute
@@ -180,7 +180,7 @@ BEGIN
         END IF;
     END LOOP;
 
-
+    RAISE NOTICE 'join_sql: %', join_sql;  
     -- Build the CSV header
     header := '';
     FOR i IN 1 .. array_length(path_names, 1) LOOP
