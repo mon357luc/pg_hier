@@ -14,6 +14,16 @@ CREATE INDEX IF NOT EXISTS idx_pg_hier_table_child ON pg_hier_table(child_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pg_hier_table_unique ON pg_hier_table(parent_id, child_id);
 CREATE INDEX IF NOT EXISTS idx_pg_hier_table_name ON pg_hier_table(name);
 
+CREATE FUNCTION pg_hier_parse(text) 
+RETURNS text
+AS 'MODULE_PATHNAME', 'pg_hier_parse'
+LANGUAGE C STRICT;
+
+CREATE FUNCTION pg_hier_join(TEXT, TEXT)
+RETURNS text
+AS 'MODULE_PATHNAME', 'pg_hier_join'
+LANGUAGE C STRICT;
+
 CREATE FUNCTION pg_hier_format(TEXT)
 RETURNS text
 AS 'MODULE_PATHNAME', 'pg_hier_format'
@@ -88,7 +98,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE STRICT;
 
-CREATE OR REPLACE FUNCTION pg_hier_join(v_parent_name regclass, v_child_name regclass)
+/* CREATE OR REPLACE FUNCTION pg_hier_join(v_parent_name regclass, v_child_name regclass)
 RETURNS TEXT AS
 $$
 DECLARE
@@ -131,33 +141,7 @@ BEGIN
         RAISE EXCEPTION 'No path found from % to %', v_parent_name, v_child_name;
     END IF;
 
-    col_list := '';
-    FOR i IN 1 .. array_length(path_names, 1) LOOP
-        col_list := col_list || (
-            SELECT string_agg(
-                quote_ident(path_names[i]) || '.' || quote_ident(attname) || ' AS ' || quote_ident(path_names[i] || '_' || attname),
-                ', '
-            )
-            FROM pg_attribute
-            WHERE attrelid = quote_ident(path_names[i])::regclass
-              AND attnum > 0 AND NOT attisdropped
-        );
-        IF i < array_length(path_names, 1) THEN
-            col_list := col_list || ', ';
-        END IF;
-    END LOOP;
-
-    -- Assume path_keys is text[][]
-
-    RAISE NOTICE 'path_names: %', path_names;
-    RAISE NOTICE 'path_keys: %', path_keys;
-
-    FOR i IN 1 .. array_length(path_keys, 1) LOOP
-        RAISE NOTICE 'path_keys[%] = %', i, path_keys[i];
-    END LOOP;
-
-
-    join_sql := 'SELECT ' || col_list || ' FROM ' || quote_ident(path_names[1]);
+    join_sql := 'FROM ' || quote_ident(path_names[1]);
     FOR i IN 2 .. array_length(path_names, 1) LOOP
         SELECT array_agg(elem)
         INTO key_group
@@ -198,9 +182,10 @@ BEGIN
         END IF;
     END LOOP;
 
-    -- Build the CSV rows
-    json_result := pg_hier_format(join_sql);
+    RETURN join_sql;
 
-    RETURN json_result;
+    --json_result := pg_hier_format(join_sql);
+
+    --RETURN json_result;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql; */
