@@ -1,59 +1,40 @@
-#include "pg_hier.h"
+#include "../include/pg_hier.h"
 
 #ifdef PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
 #endif
 
-struct table_stack {
-    char *table_name;
-    struct table_stack *next;
-};
-
 Datum pg_hier_parse(PG_FUNCTION_ARGS);
+Datum pg_hier_join(PG_FUNCTION_ARGS);
+Datum pg_hier_format(PG_FUNCTION_ARGS);
 
 PG_FUNCTION_INFO_V1(pg_hier_parse);
-
-static void parse_input(StringInfo buf, const char *input, struct table_stack **stack);
-static char *trim_whitespace(char *str);
-
+/*
+* CREATE FUNCTION pg_hier_parse(text) 
+* RETURNS text
+* AS 'MODULE_PATHNAME', 'pg_hier_parse'
+* LANGUAGE C STRICT;
+*/
 Datum
 pg_hier_parse(PG_FUNCTION_ARGS)
 {
     if (PG_ARGISNULL(0))
         PG_RETURN_NULL();
 
-    elog(INFO, "pg_hier_parse called");
-
     text *input_text = PG_GETARG_TEXT_PP(0);
     char *input = text_to_cstring(input_text);
     StringInfoData buf;
     struct table_stack *stack = NULL;
 
+    struct string_array *tables = palloc(sizeof(struct string_array));
+    tables->data = NULL;
+    tables->size = 0;
+    tables->capacity = 0;
+
     initStringInfo(&buf);
     appendStringInfoString(&buf, "SELECT ");
-    parse_input(&buf, input, &stack); 
+    parse_input(&buf, input, &stack, &tables); 
 
-    appendStringInfoString(&buf, " FROM ");
-
-    char *start = strchr(input, '{');
-    char *default_table = NULL;
-    if (start)
-    {
-        *start = '\0'; 
-        default_table = trim_whitespace(input);
-        if(strlen(default_table) == 0) {
-            default_table = NULL;
-        }
-        *start = '{'; 
-    }
-    if (default_table)
-    {
-        appendStringInfoString(&buf, default_table);
-    }
-    else
-    {
-        appendStringInfoString(&buf, "some_table");
-    }
     pfree(input);
 
     if (stack != NULL)
@@ -70,103 +51,13 @@ pg_hier_parse(PG_FUNCTION_ARGS)
     PG_RETURN_TEXT_P(cstring_to_text(buf.data));
 }
 
-static void
-parse_input(StringInfo buf, const char *input, struct table_stack **stack)
-{
-    char *input_copy = pstrdup(input);
-    char *token;
-    char *next_token = NULL;
-    char *prev_token = NULL;
-    char *saveptr;
-    bool first = true;
-
-    token = strtok_r(input_copy, ", \n\t", &saveptr);
-
-    struct table_stack *new_entry = palloc(sizeof(struct table_stack));
-    new_entry->table_name = pstrdup(token);
-    new_entry->next = *stack;
-    *stack = new_entry;
-    token = strtok_r(NULL, ", \n\t", &saveptr);
-
-    if (token == NULL || *token != '{')
-    {
-        ereport(ERROR, (errmsg("Expected opening brace '{' after table name")));
-    }
-    token = strtok_r(NULL, ", \n\t", &saveptr);
-
-    while (token != NULL)
-    {
-        token = trim_whitespace(token);
-
-        if (*token == '\0')
-        {
-            token = strtok_r(NULL, ", \n\t", &saveptr);
-            continue;
-        }
-        if (strcmp(token, "}") == 0)
-        {
-            if (*stack == NULL)
-            {
-                ereport(ERROR, (errmsg("Unmatched closing brace in input")));
-            }
-            struct table_stack *top = *stack;
-            *stack = (*stack)->next;
-            pfree(top->table_name);
-            pfree(top);
-            token = strtok_r(NULL, ", \n\t", &saveptr);
-            continue;
-        }
-
-        next_token = strtok_r(NULL, ", \n\t", &saveptr);
-
-        if (next_token && *next_token == '{')
-        {
-            struct table_stack *new_entry = palloc(sizeof(struct table_stack));
-            new_entry->table_name = pstrdup(token);
-            new_entry->next = *stack;
-            *stack = new_entry;
-            token = strtok_r(NULL, ", \n\t", &saveptr);
-            continue;
-        }
-
-        if (!first)
-        {
-            appendStringInfoString(buf, ", ");
-        }
-        first = false;
-        
-        if (stack && *stack && (*stack)->table_name)
-        {
-            appendStringInfo(buf, "%s.%s", (*stack)->table_name, token);
-        }
-        else
-        {
-            appendStringInfoString(buf, token);
-        }
-
-        prev_token = token;
-        token = next_token;
-        next_token = NULL;
-    }
-
-    pfree(input_copy);
-}
-
-static char *
-trim_whitespace(char *str)
-{
-    if (str == NULL) return NULL;
-    while (isspace((unsigned char)*str)) str++;
-    if (*str == 0)  /* All spaces? */
-        return str;
-    char *end = str + strlen(str) - 1;
-    while (end > str && isspace((unsigned char)*end)) end--;
-    end[1] = '\0';
-    return str;
-}
-
 PG_FUNCTION_INFO_V1(pg_hier_join);
-
+/*
+* CREATE FUNCTION pg_hier_join(TEXT, TEXT)
+* RETURNS text
+* AS 'MODULE_PATHNAME', 'pg_hier_join'
+* LANGUAGE C STRICT;
+*/
 Datum
 pg_hier_join(PG_FUNCTION_ARGS)
 {
@@ -191,7 +82,7 @@ pg_hier_join(PG_FUNCTION_ARGS)
         "        COALESCE(pg_hier_make_key_step(parent_key, child_key), '{[]}') AS key_path, "
         "        pg_typeof(pg_hier_make_key_step(parent_key, child_key)) AS ty1, "
         "        pg_typeof('') AS ty2 "
-        "    FROM pg_hier_table "
+        "    FROM pg_hier_detail "
         "    WHERE name = $1 "
         "    UNION ALL "
         "    SELECT "
@@ -200,12 +91,14 @@ pg_hier_join(PG_FUNCTION_ARGS)
         "        p.key_path || pg_hier_make_key_step(h.parent_key, h.child_key), "
         "        pg_typeof(pg_hier_make_key_step(h.parent_key, h.child_key)), "
         "        pg_typeof(p.key_path) "
-        "    FROM pg_hier_table h "
+        "    FROM pg_hier_detail h "
         "    JOIN path p ON h.parent_id = p.id "
         ") "
         "SELECT name_path, key_path "
         "FROM path "
         "WHERE name = $2;";
+
+    elog(INFO, "Executing query: %s", fetch_hier);
 
     Oid argtypes[2] = { TEXTOID, TEXTOID };
     Datum values[2] = { PointerGetDatum(parent_name_text), PointerGetDatum(child_name_text) };
@@ -303,7 +196,12 @@ pg_hier_join(PG_FUNCTION_ARGS)
 }
 
 PG_FUNCTION_INFO_V1(pg_hier_format);
-
+/*
+* CREATE FUNCTION pg_hier_format(TEXT)
+* RETURNS text
+* AS 'MODULE_PATHNAME', 'pg_hier_format'
+* LANGUAGE C STRICT;
+*/
 Datum
 pg_hier_format(PG_FUNCTION_ARGS)
 {
