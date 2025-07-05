@@ -1,0 +1,6 @@
+# pg_nest.control
+comment = 'pg_nest: hierarchical nesting with strong type integrity'
+default_version = '1.0'
+module_pathname = '$libdir/pg_nest'
+relocatable = true
+
