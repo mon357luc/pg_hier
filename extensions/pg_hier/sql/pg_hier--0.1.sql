@@ -22,6 +22,11 @@ CREATE INDEX IF NOT EXISTS idx_pg_hier_detail_child ON pg_hier_detail(child_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pg_hier_detail_unique ON pg_hier_detail(parent_id, child_id);
 CREATE INDEX IF NOT EXISTS idx_pg_hier_detail_name ON pg_hier_detail(name);
 
+CREATE FUNCTION pg_hier(text) 
+RETURNS text
+AS 'MODULE_PATHNAME', 'pg_hier'
+LANGUAGE C STRICT;
+
 CREATE FUNCTION pg_hier_parse(text) 
 RETURNS text
 AS 'MODULE_PATHNAME', 'pg_hier_parse'
@@ -67,8 +72,6 @@ BEGIN
         END IF;
 
         SELECT COALESCE(max(id) + 1, 1) INTO hier_id FROM pg_hier_header;
-
-        RAISE NOTICE 'Creating hierarchy with ID %', hier_id;
 
         table_path_string := array_to_string(path_names, '.');
 
@@ -121,8 +124,6 @@ BEGIN
             END IF;
         END LOOP;
 
-        RAISE NOTICE 'Hierarchy % created successfully with ID %', table_path_string, hier_id;
-
     EXCEPTION
         WHEN OTHERS THEN
             IF re_raise_exception THEN
@@ -164,8 +165,6 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION pg_hier_make_key_step(parent_keys text[], child_keys text[])
 RETURNS text[] AS $$
 BEGIN
-    RAISE NOTICE 'Creating key step with parent_keys: %, child_keys: %', parent_keys, child_keys;
-    RAISE NOTICE 'Parent keys length: %, Child keys length: %', array_length(parent_keys, 1), array_length(child_keys, 1);
     IF parent_keys IS NULL OR array_length(parent_keys, 1) IS NULL THEN
         RETURN '{[]}'::text[];
     END IF;

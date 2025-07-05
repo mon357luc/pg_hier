@@ -1,18 +1,16 @@
 #ifndef PG_HIER_DEPENDENCIES_H
 #define PG_HIER_DEPENDENCIES_H
 
-#include "pg_hier_structs.h"
-
-#include "postgres.h"
-#include "fmgr.h"
-#include "utils/array.h"
-#include "utils/lsyscache.h"
-#include "catalog/pg_type.h"
-#include "utils/builtins.h"
-#include "access/htup_details.h"
-#include "utils/typcache.h"
-#include "funcapi.h"
-#include "executor/spi.h"
-#include "executor/executor.h"
+#include "postgres.h" // Basic PostgreSQL definitions
+#include "fmgr.h"      // Function manager definitions
+#include <utils/array.h>     // For array manipulation
+#include <utils/lsyscache.h>  // System cache access
+#include <catalog/pg_type.h>   // PostgreSQL type definitions
+#include <utils/builtins.h>  // Built-in data types (text, etc.)
+#include <access/htup_details.h> // Tuple details (HeapTuple)
+#include <utils/typcache.h>  // Type cache utilities
+#include <funcapi.h>     // Function API
+#include <executor/spi.h>    // Server Programming Interface
+#include <executor/executor.h> // Executor definitions
 
 #endif /* PG_HIER_DEPENDENCIES_H */

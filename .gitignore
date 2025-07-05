@@ -7,3 +7,4 @@
 *.tmp
 *.bat
 taxon.xml
+.vscode/*

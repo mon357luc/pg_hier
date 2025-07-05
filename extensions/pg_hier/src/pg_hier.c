@@ -1,46 +1,41 @@
-#include "../include/pg_hier.h"
+#include "pg_hier.h"
 
 #ifdef PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
 #endif
 
-Datum pg_hier_parse(PG_FUNCTION_ARGS);
-Datum pg_hier_join(PG_FUNCTION_ARGS);
-Datum pg_hier_format(PG_FUNCTION_ARGS);
-
-PG_FUNCTION_INFO_V1(pg_hier_parse);
-/*
-* CREATE FUNCTION pg_hier_parse(text) 
-* RETURNS text
-* AS 'MODULE_PATHNAME', 'pg_hier_parse'
-* LANGUAGE C STRICT;
-*/
+PG_FUNCTION_INFO_V1(pg_hier);
+/**************************************
+ * function pg_hier builds and
+ * executes a hierarchical SQL query.
+ * 
+ * Relies on pg_hier_parse
+ * and pg_hier_join.
+ * 
+ * CREATE FUNCTION pg_hier(text)
+ * RETURNS text
+ * AS 'MODULE_PATHNAME', 'pg_hier'
+ * LANGUAGE C STRICT;
+****************************/
 Datum
-pg_hier_parse(PG_FUNCTION_ARGS)
+pg_hier(PG_FUNCTION_ARGS)
 {
     if (PG_ARGISNULL(0))
         PG_RETURN_NULL();
 
     text *input_text = PG_GETARG_TEXT_PP(0);
     char *input = text_to_cstring(input_text);
-    StringInfoData buf;
+    StringInfoData parse_buf;
+    initStringInfo(&parse_buf);
+
     struct table_stack *stack = NULL;
+    struct string_array *tables = NULL;
 
-    struct string_array *tables = palloc(sizeof(struct string_array));
-    tables->data = NULL;
-    tables->size = 0;
-    tables->capacity = 0;
+    appendStringInfoString(&parse_buf, "SELECT ");
+    parse_input(&parse_buf, input, &stack, &tables);
 
-    initStringInfo(&buf);
-    appendStringInfoString(&buf, "SELECT ");
-    parse_input(&buf, input, &stack, &tables); 
-
-    pfree(input);
-
-    if (stack != NULL)
-    {
-        while (stack != NULL)
-        {
+    if (stack != NULL) {
+        while (stack != NULL) {
             struct table_stack *top = stack;
             stack = stack->next;
             pfree(top->table_name);
@@ -48,24 +43,166 @@ pg_hier_parse(PG_FUNCTION_ARGS)
         }
         ereport(ERROR, (errmsg("Unmatched opening brace in input")));
     }
-    PG_RETURN_TEXT_P(cstring_to_text(buf.data));
+
+
+    if (tables == NULL || tables->size < 2) {
+        if (tables == NULL) {
+            pfree(input);
+            pfree(parse_buf.data);
+            ereport(ERROR, (errmsg("No tables found in input string.")));
+        } else {
+            pfree(input);
+            pfree(parse_buf.data);
+            free_string_array(tables);
+            ereport(ERROR, (errmsg("At least two tables are needed for hierarchical query.")));
+        }
+    }
+
+    int hier_id = pg_hier_find_hier(tables);
+
+    char *parent_table = pstrdup(tables->data[0]);
+    char *child_table = pstrdup(tables->data[tables->size - 1]);
+
+    pfree(input);
+    if(tables->data)
+        for (int i = 0; i < tables->size; ++i) {
+            pfree(tables->data[i]);
+        }
+    pfree(tables->data);
+    pfree(tables);
+
+    StringInfoData join_buf;
+    initStringInfo(&join_buf);
+
+    Datum join_result = DirectFunctionCall2(pg_hier_join, CStringGetTextDatum(parent_table), CStringGetTextDatum(child_table));
+    text *from_join_clause = DatumGetTextPP(join_result);
+    char *from_join_clause_str = text_to_cstring(from_join_clause);
+    appendStringInfoString(&join_buf, from_join_clause_str);
+
+    pfree(from_join_clause_str);
+    pfree(parent_table);
+    pfree(child_table);
+    appendStringInfoString(&parse_buf, " ");
+    appendStringInfoString(&parse_buf, join_buf.data);
+    pfree(join_buf.data);
+
+    PG_RETURN_TEXT_P(cstring_to_text(parse_buf.data));
+}
+
+PG_FUNCTION_INFO_V1(pg_hier_parse);
+/**************************************
+ * CREATE FUNCTION pg_hier_parse(text) 
+ * RETURNS text
+ * AS 'MODULE_PATHNAME', 'pg_hier_parse'
+ * LANGUAGE C STRICT;
+**************************************/
+Datum
+pg_hier_parse(PG_FUNCTION_ARGS)
+{
+    if (PG_ARGISNULL(0))
+        PG_RETURN_NULL();
+
+    MemoryContext oldcontext = CurrentMemoryContext;
+    text *input_text = PG_GETARG_TEXT_PP(0);
+    char *input = NULL;
+    StringInfoData buf;
+    struct table_stack *stack = NULL;
+    struct string_array *tables = NULL;
+    text *result = NULL;
+
+    elog(DEBUG1, "Starting pg_hier_parse");
+
+    PG_TRY();
+    {
+        input = text_to_cstring(input_text);
+        elog(DEBUG1, "Input string: %s", input);
+        
+        initStringInfo(&buf);
+        appendStringInfoString(&buf, "SELECT ");
+        
+        MemoryContextSwitchTo(oldcontext);
+        parse_input(&buf, input, &stack, &tables);
+        
+        elog(DEBUG1, "Parse complete, result: %s", buf.data);
+        
+        result = cstring_to_text(buf.data);
+        
+        if (buf.data != NULL)
+            pfree(buf.data);
+        if (input != NULL)
+            pfree(input);
+        if (stack != NULL)
+            free_table_stack(stack);
+        if (tables != NULL)
+            free_string_array(tables);
+            
+        PG_RETURN_TEXT_P(result);
+    }
+    PG_CATCH();
+    {
+        elog(WARNING, "Caught exception in pg_hier_parse");
+        
+        if (input != NULL)
+        {
+            elog(WARNING, "Input not null");
+            pfree(input);
+        }
+        if (buf.data != NULL)
+        {
+            elog(WARNING, "buf.data not null");
+            pfree(buf.data);
+        }
+        if (stack != NULL)
+        {
+            elog(WARNING, "stack not null");
+            free_table_stack(stack);
+        }
+        if (tables != NULL)
+        {
+            elog(WARNING, "tables not null");
+            free_string_array(tables);
+            elog(WARNING, "Reached end of function");
+        }
+            
+        PG_RE_THROW();
+    }
+    PG_END_TRY();
 }
 
 PG_FUNCTION_INFO_V1(pg_hier_join);
-/*
-* CREATE FUNCTION pg_hier_join(TEXT, TEXT)
-* RETURNS text
-* AS 'MODULE_PATHNAME', 'pg_hier_join'
-* LANGUAGE C STRICT;
-*/
+/**************************************
+ * CREATE FUNCTION pg_hier_join(TEXT, TEXT)
+ * RETURNS text
+ * AS 'MODULE_PATHNAME', 'pg_hier_join'
+ * LANGUAGE C STRICT;
+**************************************/
 Datum
 pg_hier_join(PG_FUNCTION_ARGS)
 {
+    bool isnull;
+
     text *parent_name_text = PG_GETARG_TEXT_PP(0);
     text *child_name_text = PG_GETARG_TEXT_PP(1);
 
     char *parent_name = text_to_cstring(parent_name_text);
     char *child_name = text_to_cstring(child_name_text);
+
+    Datum *name_path_elems;
+    bool *name_path_nulls;
+    int name_path_count;
+
+    Datum *key_path_elems;
+    bool *key_path_nulls;
+    int key_path_count;
+
+    char *parent_table = NULL;
+    char *join_table = NULL;
+    char *key_json = NULL;
+    char *key_array = NULL;
+    char *end_array = NULL;
+    int key_idx;
+
+    char *saveptr = NULL;
 
     StringInfoData join_sql;
     initStringInfo(&join_sql);
@@ -98,8 +235,6 @@ pg_hier_join(PG_FUNCTION_ARGS)
         "FROM path "
         "WHERE name = $2;";
 
-    elog(INFO, "Executing query: %s", fetch_hier);
-
     Oid argtypes[2] = { TEXTOID, TEXTOID };
     Datum values[2] = { PointerGetDatum(parent_name_text), PointerGetDatum(child_name_text) };
     ret = SPI_execute_with_args(fetch_hier, 2, argtypes, values, NULL, true, 0);
@@ -117,8 +252,6 @@ pg_hier_join(PG_FUNCTION_ARGS)
     HeapTuple tuple = SPI_tuptable->vals[0];
     TupleDesc tupdesc = SPI_tuptable->tupdesc;
 
-    bool isnull;
-
     Datum name_path_datum = SPI_getbinval(tuple, tupdesc, 1, &isnull);
     Datum key_path_datum  = SPI_getbinval(tuple, tupdesc, 2, &isnull);
 
@@ -133,15 +266,10 @@ pg_hier_join(PG_FUNCTION_ARGS)
         elog(ERROR, "No path found from %s to %s", parent_name, child_name);
     }
 
-    Datum *name_path_elems;
-    bool *name_path_nulls;
-    int name_path_count;
     deconstruct_array(name_path_arr, TEXTOID, -1, false, 'i',
                       &name_path_elems, &name_path_nulls, &name_path_count);
 
-    Datum *key_path_elems;
-    bool *key_path_nulls;
-    int key_path_count;
+    
     deconstruct_array(key_path_arr, TEXTOID, -1, false, 'i',
                       &key_path_elems, &key_path_nulls, &key_path_count);
 
@@ -149,25 +277,31 @@ pg_hier_join(PG_FUNCTION_ARGS)
     appendStringInfo(&join_sql, "FROM %s", TextDatumGetCString(name_path_elems[0]));
 
     for (int i = 1; i < name_path_count; i++) {
-        char *key_json = TextDatumGetCString(key_path_elems[i]);
-        // Example: key_json = ["item_id:product_id","foo:bar"]
-
-        char *key_array = key_json;
+        parent_table = pstrdup(TextDatumGetCString(name_path_elems[i-1]));
+        join_table = pstrdup(TextDatumGetCString(name_path_elems[i]));
+        key_json = TextDatumGetCString(key_path_elems[i]);
+        // Skip leading brackets and spaces
+        key_array = key_json;
         while (*key_array && (*key_array == '[' || *key_array == ' ')) key_array++;
-        char *end_array = key_array + strlen(key_array) - 1;
-        while (end_array > key_array && (*end_array == ']' || *end_array == ' ')) *end_array-- = '\0';
 
-        char *saveptr = NULL;
+        // Remove trailing brackets and spaces
+        end_array = key_array + strlen(key_array) - 1;
+        while (end_array > key_array && (*end_array == ']' || *end_array == ' ')) {
+            *end_array = '\0';
+            end_array--;
+        }
+
         char *pair = strtok_r(key_array, ",", &saveptr);
-
-        appendStringInfo(&join_sql, " JOIN %s ON ", TextDatumGetCString(name_path_elems[i]));
-
-        int key_idx = 0;
+        appendStringInfo(&join_sql, " JOIN %s ON ", join_table);
+        key_idx = 0;
         while (pair) {
+            // Skip leading quotes and spaces
             while (*pair && (*pair == '"' || *pair == ' ')) pair++;
+            
+            // Find ending quote and terminate string there
             char *end_quote = strchr(pair, '"');
             if (end_quote) *end_quote = '\0';
-
+            
             char *colon = strchr(pair, ':');
             if (!colon) {
                 SPI_finish();
@@ -176,32 +310,33 @@ pg_hier_join(PG_FUNCTION_ARGS)
             *colon = '\0';
             char *left_key = pair;
             char *right_key = colon + 1;
-
+            
             if (key_idx > 0)
                 appendStringInfoString(&join_sql, " AND ");
 
+            elog(INFO, "Current table check 2: %s", 
+                TextDatumGetCString(name_path_elems[i]));
+                
             appendStringInfo(&join_sql, "%s.%s = %s.%s",
-                TextDatumGetCString(name_path_elems[i-1]), left_key,
-                TextDatumGetCString(name_path_elems[i]), right_key
+                parent_table, left_key,
+                join_table, right_key
             );
-
+            
             key_idx++;
             pair = strtok_r(NULL, ",", &saveptr);
         }
     }
-
     SPI_finish();
-
     PG_RETURN_TEXT_P(cstring_to_text(join_sql.data));
 }
 
 PG_FUNCTION_INFO_V1(pg_hier_format);
-/*
-* CREATE FUNCTION pg_hier_format(TEXT)
-* RETURNS text
-* AS 'MODULE_PATHNAME', 'pg_hier_format'
-* LANGUAGE C STRICT;
-*/
+/**************************************
+ * CREATE FUNCTION pg_hier_format(TEXT)
+ * RETURNS text
+ * AS 'MODULE_PATHNAME', 'pg_hier_format'
+ * LANGUAGE C STRICT;
+**************************************/
 Datum
 pg_hier_format(PG_FUNCTION_ARGS)
 {
@@ -280,6 +415,5 @@ pg_hier_format(PG_FUNCTION_ARGS)
 
     appendStringInfoChar(&buf, '}');
     SPI_finish();
-
     PG_RETURN_TEXT_P(cstring_to_text(buf.data));
 }
