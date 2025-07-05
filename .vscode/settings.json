@@ -1,8 +1,0 @@
-{
-    "C_Cpp.errorSquiggles": "enabled",
-    "files.associations": {
-        "*.dbclient-js": "javascript",
-        "pg_hier_structs.h": "c",
-        "executor.h": "c"
-    }
-}
