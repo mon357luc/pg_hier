@@ -29,13 +29,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_pg_hier_detail_unique ON pg_hier_detail(pa
 CREATE INDEX IF NOT EXISTS idx_pg_hier_detail_name ON pg_hier_detail(name);
 
 /**************************************
- * Define necessary types
- **************************************/
-CREATE TYPE jsonb_agg_state AS (
-    result jsonb
-);
-
-/**************************************
  * Define C source code functions
  **************************************/
 CREATE FUNCTION pg_hier(text) 
@@ -199,19 +192,3 @@ BEGIN
     ];
 END;
 $$ LANGUAGE plpgsql IMMUTABLE STRICT;
-
-CREATE OR REPLACE FUNCTION pg_hier_col_to_json_sfunc(internal, VARIADIC "any")
-RETURNS internal
-AS 'MODULE_PATHNAME', 'pg_hier_col_to_json_sfunc'
-LANGUAGE C IMMUTABLE;
-
-CREATE OR REPLACE FUNCTION pg_hier_col_to_json_ffunc(internal)
-RETURNS jsonb
-AS 'MODULE_PATHNAME', 'pg_hier_col_to_json_ffunc'
-LANGUAGE C IMMUTABLE;
-
-CREATE AGGREGATE pg_hier_col_to_json(VARIADIC "any") (
-    SFUNC = pg_hier_col_to_json_sfunc,
-    STYPE = internal,
-    FINALFUNC = pg_hier_col_to_json_ffunc
-);
