@@ -1,7 +1,5 @@
 #include "pg_hier_helper.h"
 
-static int compare_string_positions(const void *a, const void *b);
-
 void
 parse_input(StringInfo buf, const char *input, struct table_stack **stack, struct string_array **tables)
 {
@@ -231,4 +229,252 @@ static int compare_string_positions(const void *a, const void *b) {
     struct table_position *posB = (struct table_position *)b;
 
     return posA->hierarchy_position - posB->hierarchy_position;
+}
+
+JsonbValue
+datum_to_jsonb_value(Datum value_datum, Oid value_type)
+{
+    JsonbValue val;
+    Oid typoutput;
+    bool typIsVarlena;
+    char *outputstr = NULL;
+    
+    memset(&val, 0, sizeof(JsonbValue));
+    
+    switch (value_type)
+    {
+    case INT2OID:
+    case INT4OID:
+    case INT8OID:
+    case FLOAT4OID:
+    case FLOAT8OID:
+    case NUMERICOID: {
+        getTypeOutputInfo(value_type, &typoutput, &typIsVarlena);
+        outputstr = OidOutputFunctionCall(typoutput, value_datum);
+        val.type = jbvString;
+        val.val.string.val = pstrdup(outputstr);
+        val.val.string.len = strlen(outputstr);
+        pfree(outputstr); 
+        break;
+    }
+    case BOOLOID:
+        val.type = jbvBool;
+        val.val.boolean = DatumGetBool(value_datum);
+        break;
+    case TEXTOID:
+    case VARCHAROID: {
+        text *txt = DatumGetTextPP(value_datum);
+        outputstr = text_to_cstring(txt);
+        val.type = jbvString;
+        val.val.string.val = pstrdup(outputstr); 
+        val.val.string.len = strlen(outputstr);
+        pfree(outputstr);
+        break;
+    }
+    default:
+        getTypeOutputInfo(value_type, &typoutput, &typIsVarlena);
+        outputstr = OidOutputFunctionCall(typoutput, value_datum);
+        val.type = jbvString;
+        val.val.string.val = pstrdup(outputstr);
+        val.val.string.len = strlen(outputstr);
+        pfree(outputstr); 
+        break;
+    }
+    
+    return val;
+}
+
+Jsonb *
+get_or_create_array(Jsonb *existing_jsonb, char* key_str)
+{
+    JsonbValue key;
+    JsonbIterator *it;
+    JsonbIteratorToken r;
+    JsonbValue v;
+    JsonbParseState *arr_parse_state = NULL;
+    bool found = false;
+
+    key.type = jbvString;
+    key.val.string.val = key_str;
+    key.val.string.len = strlen(key_str);
+        
+    if (existing_jsonb) {
+        it = JsonbIteratorInit(&existing_jsonb->root);
+        r = JsonbIteratorNext(&it, &v, true);
+
+        while ((r = JsonbIteratorNext(&it, &v, true)) != WJB_DONE) {
+            if (r == WJB_KEY &&
+                v.val.string.len == key.val.string.len &&
+                memcmp(v.val.string.val, key.val.string.val, v.val.string.len) == 0) {
+                found = true;
+                    
+                r = JsonbIteratorNext(&it, &v, true);
+                if (r == WJB_BEGIN_ARRAY) {
+                    arr_parse_state = NULL;
+                    pushJsonbValue(&arr_parse_state, WJB_BEGIN_ARRAY, NULL);
+                    
+                    while ((r = JsonbIteratorNext(&it, &v, true)) != WJB_END_ARRAY) {
+                        if (r == WJB_ELEM) {
+                            pushJsonbValue(&arr_parse_state, WJB_ELEM, &v);
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    if(!found){
+        arr_parse_state = NULL;
+        pushJsonbValue(&arr_parse_state, WJB_BEGIN_ARRAY, NULL);
+    }
+    if (arr_parse_state != NULL){
+        return JsonbValueToJsonb(pushJsonbValue(&arr_parse_state, WJB_END_ARRAY, NULL));
+    }
+    else{
+        return NULL; 
+    }
+}
+
+int
+find_column_index(ColumnArrayState *state, text *column_name)
+{
+    for (int i = 0; i < state->num_columns; i++) {
+        text *existing = state->column_names[i];
+        if (VARSIZE_ANY_EXHDR(column_name) == VARSIZE_ANY_EXHDR(existing) &&
+            memcmp(VARDATA_ANY(column_name), VARDATA_ANY(existing),
+                  VARSIZE_ANY_EXHDR(column_name)) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void
+datum_to_jsonb(Datum val, Oid val_type, JsonbValue *result)
+{
+    switch (val_type) {
+        case BOOLOID:
+            result->type = jbvBool;
+            result->val.boolean = DatumGetBool(val);
+            break;
+
+        case INT2OID:
+            result->type = jbvNumeric;
+            result->val.numeric = DatumGetNumeric(DirectFunctionCall1(int2_numeric, val));
+            break;
+
+        case INT4OID:
+            result->type = jbvNumeric;
+            result->val.numeric = DatumGetNumeric(DirectFunctionCall1(int4_numeric, val));
+            break;
+
+        case INT8OID:
+            result->type = jbvNumeric;
+            result->val.numeric = DatumGetNumeric(DirectFunctionCall1(int8_numeric, val));
+            break;
+
+        case FLOAT4OID:
+            result->type = jbvNumeric;
+            result->val.numeric = DatumGetNumeric(DirectFunctionCall1(float4_numeric, val));
+            break;
+
+        case FLOAT8OID:
+            result->type = jbvNumeric;
+            result->val.numeric = DatumGetNumeric(DirectFunctionCall1(float8_numeric, val));
+            break;
+
+        case NUMERICOID:
+            result->type = jbvNumeric;
+            result->val.numeric = DatumGetNumeric(val);
+            break;
+
+        case TEXTOID:
+        case VARCHAROID:
+        case BPCHAROID:
+        case NAMEOID:
+            {
+                text *t = DatumGetTextP(val);
+                result->type = jbvString;
+                result->val.string.val = VARDATA_ANY(t);
+                result->val.string.len = VARSIZE_ANY_EXHDR(t);
+                break;
+            }
+
+        case JSONOID:
+            {
+                /* Convert JSON to JSONB */
+                Jsonb *jb;
+                jb = DatumGetJsonbP(DirectFunctionCall1(to_jsonb, val));
+                
+                JsonbContainer *container = &jb->root;
+                if (JB_ROOT_IS_SCALAR(container)) {
+                    /* For scalar, extract the value */
+                    JsonbValue scalar_value;
+                    JsonbIterator *it = JsonbIteratorInit(container);
+                    JsonbIteratorToken tok = JsonbIteratorNext(&it, &scalar_value, true);
+                    
+                    if (tok == WJB_VALUE) {
+                        *result = scalar_value;
+                    } else {
+                        /* Shouldn't happen but handle anyway */
+                        result->type = jbvString;
+                        result->val.string.val = "[Complex JSON value]";
+                        result->val.string.len = 20;
+                    }
+                    
+                } else {
+                    /* For object/array, store as binary JSONB */
+                    result->type = jbvBinary;
+                    result->val.binary.data = jb;
+                    result->val.binary.len = VARSIZE(jb);
+                }
+                break;
+            }
+
+        case JSONBOID:
+            {
+                Jsonb *jb = DatumGetJsonbP(val);
+                JsonbContainer *container = &jb->root;
+                
+                if (JB_ROOT_IS_SCALAR(container)) {
+                    /* For scalar, extract the value */
+                    JsonbValue scalar_value;
+                    JsonbIterator *it = JsonbIteratorInit(container);
+                    JsonbIteratorToken tok = JsonbIteratorNext(&it, &scalar_value, true);
+                    
+                    if (tok == WJB_VALUE) {
+                        *result = scalar_value;
+                    } else {
+                        /* Shouldn't happen but handle anyway */
+                        result->type = jbvString;
+                        result->val.string.val = "[Complex JSONB value]";
+                        result->val.string.len = 21;
+                    }
+                    
+                    
+                } else {
+                    /* For object/array, store as binary JSONB */
+                    result->type = jbvBinary;
+                    result->val.binary.data = jb;
+                    result->val.binary.len = VARSIZE(jb);
+                }
+                break;
+            }
+
+        default:
+            /* For other types, convert to string */
+            {
+                char *out_str;
+                Oid output_function_id;
+                bool is_varlena;
+                
+                getTypeOutputInfo(val_type, &output_function_id, &is_varlena);
+                out_str = OidOutputFunctionCall(output_function_id, val);
+                
+                result->type = jbvString;
+                result->val.string.val = out_str;
+                result->val.string.len = strlen(out_str);
+                break;
+            }
+    }
 }

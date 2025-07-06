@@ -1,3 +1,6 @@
+/**************************************
+ * Define necessary tables
+ **************************************/
 CREATE TABLE IF NOT EXISTS pg_hier_header (
     id SERIAL PRIMARY KEY,
     table_path TEXT NOT NULL
@@ -15,6 +18,9 @@ CREATE TABLE IF NOT EXISTS pg_hier_detail (
     child_key TEXT[]
 );
 
+ /**************************************
+ * Table indexes
+ **************************************/
 CREATE INDEX IF NOT EXISTS idx_pg_hier_detail_hierarchy ON pg_hier_detail(hierarchy_id);
 CREATE INDEX IF NOT EXISTS idx_pg_hier_detail_hierarchy ON pg_hier_detail(hierarchy_id, name);
 CREATE INDEX IF NOT EXISTS idx_pg_hier_detail_parent ON pg_hier_detail(parent_id);
@@ -22,6 +28,16 @@ CREATE INDEX IF NOT EXISTS idx_pg_hier_detail_child ON pg_hier_detail(child_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pg_hier_detail_unique ON pg_hier_detail(parent_id, child_id);
 CREATE INDEX IF NOT EXISTS idx_pg_hier_detail_name ON pg_hier_detail(name);
 
+/**************************************
+ * Define necessary types
+ **************************************/
+CREATE TYPE jsonb_agg_state AS (
+    result jsonb
+);
+
+/**************************************
+ * Define C source code functions
+ **************************************/
 CREATE FUNCTION pg_hier(text) 
 RETURNS text
 AS 'MODULE_PATHNAME', 'pg_hier'
@@ -42,6 +58,9 @@ RETURNS text
 AS 'MODULE_PATHNAME', 'pg_hier_format'
 LANGUAGE C STRICT;
 
+/**************************************
+ * Define SQL source code functions
+ **************************************/
 CREATE OR REPLACE FUNCTION pg_hier_create_hier(
     path_names text[],
     parent_path_keys text[],
@@ -180,3 +199,19 @@ BEGIN
     ];
 END;
 $$ LANGUAGE plpgsql IMMUTABLE STRICT;
+
+CREATE OR REPLACE FUNCTION pg_hier_col_to_json_sfunc(internal, VARIADIC "any")
+RETURNS internal
+AS 'MODULE_PATHNAME', 'pg_hier_col_to_json_sfunc'
+LANGUAGE C IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION pg_hier_col_to_json_ffunc(internal)
+RETURNS jsonb
+AS 'MODULE_PATHNAME', 'pg_hier_col_to_json_ffunc'
+LANGUAGE C IMMUTABLE;
+
+CREATE AGGREGATE pg_hier_col_to_json(VARIADIC "any") (
+    SFUNC = pg_hier_col_to_json_sfunc,
+    STYPE = internal,
+    FINALFUNC = pg_hier_col_to_json_ffunc
+);

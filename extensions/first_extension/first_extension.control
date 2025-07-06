@@ -1,6 +1,0 @@
-# first_extension.control
-
-comment = 'First Extension'
-default_version = '1.0.0'
-module_pathname = 'extension/first_extension'
-relocatable = true

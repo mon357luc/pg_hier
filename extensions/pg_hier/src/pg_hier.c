@@ -331,6 +331,7 @@ pg_hier_join(PG_FUNCTION_ARGS)
 }
 
 PG_FUNCTION_INFO_V1(pg_hier_format);
+
 /**************************************
  * CREATE FUNCTION pg_hier_format(TEXT)
  * RETURNS text
@@ -416,4 +417,220 @@ pg_hier_format(PG_FUNCTION_ARGS)
     appendStringInfoChar(&buf, '}');
     SPI_finish();
     PG_RETURN_TEXT_P(cstring_to_text(buf.data));
+}
+
+PG_FUNCTION_INFO_V1(pg_hier_col_to_json_sfunc);
+/**************************************
+ * Transition function for column array aggregation
+ * Takes column_name:text, column_value pairs as arguments
+ **************************************/
+Datum
+pg_hier_col_to_json_sfunc(PG_FUNCTION_ARGS)
+{
+    MemoryContext agg_context;
+    MemoryContext old_context;
+    ColumnArrayState *state;
+    
+    /* Check if called as an aggregate */
+    if (!AggCheckCallContext(fcinfo, &agg_context))
+        elog(ERROR, "pg_hier_col_to_json_sfunc called in non-aggregate context");
+        
+    /* Get or initialize the state */
+    if (PG_ARGISNULL(0)) {
+        old_context = MemoryContextSwitchTo(agg_context);
+        state = (ColumnArrayState *) palloc0(sizeof(ColumnArrayState));
+        state->allocated = 8;  /* Initial capacity */
+        state->num_columns = 0;
+        state->column_names = (text **) palloc(sizeof(text *) * state->allocated);
+        state->column_values = (List **) palloc(sizeof(List *) * state->allocated);
+        state->column_nulls = (List **) palloc(sizeof(List *) * state->allocated);
+        state->column_types = (Oid *) palloc(sizeof(Oid) * state->allocated);
+        MemoryContextSwitchTo(old_context);
+    } else {
+        state = (ColumnArrayState *) PG_GETARG_POINTER(0);
+    }
+    
+    /* Check if we have a key-value pair */
+    if (PG_NARGS() < 3 || PG_NARGS() % 2 != 1)
+        elog(ERROR, "Expected key-value pairs, got odd number of arguments");
+        
+    /* Process each key-value pair */
+    for (int i = 1; i < PG_NARGS(); i += 2) {
+        /* Process key (should be text) */
+        if (PG_ARGISNULL(i))
+            elog(ERROR, "Column name cannot be NULL");
+        
+        text *column_name = PG_GETARG_TEXT_PP(i);
+        
+        /* Check if this column already exists in our state */
+        int col_idx = find_column_index(state, column_name);
+        
+        /* If this is a new column, add it */
+        if (col_idx < 0) {
+            /* Resize arrays if necessary */
+            if (state->num_columns >= state->allocated) {
+                old_context = MemoryContextSwitchTo(agg_context);
+                state->allocated *= 2;
+                state->column_names = (text **) repalloc(state->column_names, sizeof(text *) * state->allocated);
+                state->column_values = (List **) repalloc(state->column_values, sizeof(List *) * state->allocated);
+                state->column_nulls = (List **) repalloc(state->column_nulls, sizeof(List *) * state->allocated);
+                state->column_types = (Oid *) repalloc(state->column_types, sizeof(Oid) * state->allocated);
+                MemoryContextSwitchTo(old_context);
+            }
+            
+            /* Add the new column */
+            col_idx = state->num_columns++;
+            
+            old_context = MemoryContextSwitchTo(agg_context);
+            
+            /* Make a copy of the text in the agg context */
+            text *column_name_copy = (text *) palloc(VARSIZE_ANY(column_name));
+            memcpy(column_name_copy, column_name, VARSIZE_ANY(column_name));
+            
+            state->column_names[col_idx] = column_name_copy;
+            state->column_values[col_idx] = NIL;
+            state->column_nulls[col_idx] = NIL;
+            state->column_types[col_idx] = InvalidOid;
+            MemoryContextSwitchTo(old_context);
+        }
+        
+        /* Process value */
+        Datum value;
+        bool is_null;
+        Oid value_type;
+        
+        if (PG_ARGISNULL(i+1)) {
+            is_null = true;
+            value = (Datum) 0;
+        } else {
+            is_null = false;
+            value = PG_GETARG_DATUM(i+1);
+            value_type = get_fn_expr_argtype(fcinfo->flinfo, i+1);
+            
+            /* If this is the first value for this column, store its type */
+            if (state->column_types[col_idx] == InvalidOid)
+                state->column_types[col_idx] = value_type;
+            
+            /* If types don't match, raise an error */
+            else if (state->column_types[col_idx] != value_type)
+                elog(ERROR, "Column value types must be consistent within a column");
+        }
+        
+        /* Add the value to the column's value list */
+        old_context = MemoryContextSwitchTo(agg_context);
+        
+        /* For non-null values */
+        if (!is_null) {
+            if (value_type != InvalidOid) {
+                int16 typlen;
+                bool typbyval;
+                
+                get_typlenbyval(value_type, &typlen, &typbyval);
+                if (typbyval) {
+                    /* For by-value types, just add the datum */
+                    state->column_values[col_idx] = lappend(state->column_values[col_idx], 
+                                                           (void *) value);
+                } else {
+                    /* For by-reference types, copy the value */
+                    state->column_values[col_idx] = lappend(state->column_values[col_idx], 
+                                                           DatumGetPointer(datumCopy(value, false, typlen)));
+                }
+            }
+        }
+        
+        /* Add null flag to the nulls list */
+        state->column_nulls[col_idx] = lappend_int(state->column_nulls[col_idx], is_null ? 1 : 0);
+        
+        MemoryContextSwitchTo(old_context);
+    }
+    
+    PG_RETURN_POINTER(state);
+}
+
+PG_FUNCTION_INFO_V1(pg_hier_col_to_json_ffunc);
+/**************************************
+ * Final function for column array aggregation
+ * Converts the state to a JSONB object with arrays
+ **************************************/
+Datum
+pg_hier_col_to_json_ffunc(PG_FUNCTION_ARGS)
+{
+    ColumnArrayState *state;
+    
+    /* Final functions can be called with NULL state */
+    if (PG_ARGISNULL(0))
+        PG_RETURN_NULL();
+        
+    state = (ColumnArrayState *) PG_GETARG_POINTER(0);
+    
+    if (state->num_columns == 0)
+        PG_RETURN_NULL();
+        
+    /* Create a new jsonb object */
+    JsonbParseState *parse_state = NULL;
+    JsonbValue *result;
+    
+    pushJsonbValue(&parse_state, WJB_BEGIN_OBJECT, NULL);
+    
+    /* Process each column */
+    for (int i = 0; i < state->num_columns; i++) {
+        /* Extract column name as text */
+        text *key_text = state->column_names[i];
+        char *key_cstr = text_to_cstring(key_text);
+        
+        JsonbValue key_value;
+        key_value.type = jbvString;
+        key_value.val.string.val = pstrdup(key_cstr);
+        key_value.val.string.len = strlen(key_cstr);
+        
+        pushJsonbValue(&parse_state, WJB_KEY, &key_value);
+        
+        /* Begin array for this column */
+        pushJsonbValue(&parse_state, WJB_BEGIN_ARRAY, NULL);
+        
+        /* Get the column values and null flags */
+        List *values = state->column_values[i];
+        List *nulls = state->column_nulls[i];
+        Oid type_id = state->column_types[i];
+        
+        /* Add each value to the array */
+        ListCell *val_cell, *null_cell;
+        forboth(val_cell, values, null_cell, nulls)
+        {
+            int is_null = lfirst_int(null_cell);
+            
+            if (is_null) {
+                /* Add NULL value */
+                JsonbValue null_value;
+                null_value.type = jbvNull;
+                pushJsonbValue(&parse_state, WJB_ELEM, &null_value);
+            } else {
+                /* Add non-NULL value */
+                Datum val_datum;
+                if (type_id != InvalidOid) {
+                    int16 typlen;
+                    bool typbyval;
+                    
+                    get_typlenbyval(type_id, &typlen, &typbyval);
+                    if (typbyval)
+                        val_datum = (Datum) lfirst(val_cell);
+                    else
+                        val_datum = PointerGetDatum(lfirst(val_cell));
+                    
+                    JsonbValue jbv;
+                    datum_to_jsonb(val_datum, type_id, &jbv);
+                    pushJsonbValue(&parse_state, WJB_ELEM, &jbv);
+                }
+            }
+        }
+        
+        /* End array for this column */
+        pushJsonbValue(&parse_state, WJB_END_ARRAY, NULL);
+        
+        pfree(key_cstr); /* Free the C string */
+    }
+    
+    result = pushJsonbValue(&parse_state, WJB_END_OBJECT, NULL);
+    
+    PG_RETURN_JSONB_P(JsonbValueToJsonb(result));
 }

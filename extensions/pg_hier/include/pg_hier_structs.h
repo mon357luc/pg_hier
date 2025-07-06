@@ -27,5 +27,14 @@ struct table_position {
     int hierarchy_position;
 };
 
+typedef struct ColumnArrayState {
+    int allocated;           /* Number of columns allocated */
+    int num_columns;         /* Number of columns being tracked */
+    text **column_names;     /* Array of column names */
+    List **column_values;    /* List of values for each column */
+    List **column_nulls;     /* List of null flags for each column */
+    Oid *column_types;       /* Type OID for each column */
+} ColumnArrayState;
+
 #endif /* PG_HIER_STRUCTS_H */
 
