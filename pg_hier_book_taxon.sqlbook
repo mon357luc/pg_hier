@@ -53,8 +53,10 @@ SELECT jsonb_agg(
                             ), 'species', (
                                 SELECT jsonb_agg(
                                         json_build_object(
-                                            'scientific_name', species.scientific_name, 'common_name', species.common_name
-                                        )
+                                            'scientific_name', string_agg(species.scientific_name, ','), 
+                                            'common_name', species.common_name, ',')
+                                        ), 
+
                                     )
                                 FROM species
                                     JOIN genera ON (
