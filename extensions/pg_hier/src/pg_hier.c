@@ -27,7 +27,7 @@ Datum pg_hier(PG_FUNCTION_ARGS)
     StringInfoData parse_buf;
     initStringInfo(&parse_buf);
 
-    struct string_array *tables = NULL;
+    string_array *tables = NULL;
 
     appendStringInfoString(&parse_buf, "SELECT ");
     parse_input(&parse_buf, input, &tables);
@@ -49,42 +49,39 @@ Datum pg_hier(PG_FUNCTION_ARGS)
         }
     }
 
-    int hier_id = pg_hier_find_hier(tables);
+    free_string_array(tables);
 
-    char *parent_table = pstrdup(tables->data[0]);
-    char *child_table = pstrdup(tables->data[tables->size - 1]);
+    // int hier_id = pg_hier_find_hier(tables);
 
-    pfree(input);
-    if (tables->data)
-        for (int i = 0; i < tables->size; ++i)
-        {
-            pfree(tables->data[i]);
-        }
-    pfree(tables->data);
-    pfree(tables);
+    // char *parent_table = pstrdup(tables->data[0]);
+    // char *child_table = pstrdup(tables->data[tables->size - 1]);
 
-    StringInfoData join_buf;
-    initStringInfo(&join_buf);
+    // pfree(input);
+    // if (tables->data)
+    //     for (int i = 0; i < tables->size; ++i)
+    //     {
+    //         pfree(tables->data[i]);
+    //     }
+    // pfree(tables->data);
+    // pfree(tables);
 
-    elog(INFO, "Creating hierarchical join");
+    // StringInfoData join_buf;
+    // initStringInfo(&join_buf);
 
-    Datum join_result = DirectFunctionCall2(pg_hier_join,
-                                            CStringGetTextDatum(parent_table),
-                                            CStringGetTextDatum(child_table));
-    elog(INFO, "Check");
-    text *from_join_clause = DatumGetTextPP(join_result);
-    elog(INFO, "Check");
-    char *from_join_clause_str = text_to_cstring(from_join_clause);
-    elog(INFO, "Check");
-    appendStringInfoString(&join_buf, from_join_clause_str);
+    // Datum join_result = DirectFunctionCall2(pg_hier_join,
+    //                                         CStringGetTextDatum(parent_table),
+    //                                         CStringGetTextDatum(child_table));
+    
+    // text *from_join_clause = DatumGetTextPP(join_result);
+    // char *from_join_clause_str = text_to_cstring(from_join_clause);
+    // appendStringInfoString(&join_buf, from_join_clause_str);
 
-    elog(INFO, "Freeing memory");
-    pfree(from_join_clause_str);
-    pfree(parent_table);
-    pfree(child_table);
-    appendStringInfoString(&parse_buf, " ");
-    appendStringInfoString(&parse_buf, join_buf.data);
-    pfree(join_buf.data);
+    // pfree(from_join_clause_str);
+    // pfree(parent_table);
+    // pfree(child_table);
+    // appendStringInfoString(&parse_buf, " ");
+    // appendStringInfoString(&parse_buf, join_buf.data);
+    // pfree(join_buf.data);
 
     PG_RETURN_TEXT_P(cstring_to_text(parse_buf.data));
 }
@@ -106,7 +103,7 @@ Datum pg_hier_parse(PG_FUNCTION_ARGS)
     StringInfoData parse_buf;
     initStringInfo(&parse_buf);
 
-    struct string_array *tables = NULL;
+    string_array *tables = NULL;
 
     appendStringInfoString(&parse_buf, "SELECT ");
     parse_input(&parse_buf, input, &tables);

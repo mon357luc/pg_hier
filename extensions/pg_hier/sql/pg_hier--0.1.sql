@@ -1,4 +1,10 @@
 /**************************************
+ * Define scehma and set search path
+ **************************************/
+-- CREATE SCHEMA hier;
+-- SET search_path TO hier, public;
+
+/**************************************
  * Define necessary tables
  **************************************/
 CREATE TABLE IF NOT EXISTS pg_hier_header (
