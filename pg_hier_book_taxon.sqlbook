@@ -1,0 +1,117 @@
+-- SQLBook: Code
+ALTER USER postgres SET search_path TO public, taxon;
+-- SQLBook: Code
+SELECT pg_hier_create_hier (
+        ARRAY[
+            'kingdoms', 'phyla', 'classes', 'orders', 'families', 'genera', 'species'
+        ], ARRAY[
+            NULL::TEXT, 'kingdom_id', 'plylum_id', 'class_id', 'order_id', 'family_id', 'genus_id'
+        ], ARRAY[
+            NULL::TEXT, 'kingdom_id', 'plylum_id', 'class_id', 'order_id', 'family_id', 'genus_id'
+        ]
+    )
+-- SQLBook: Code
+SELECT * FROM pg_hier_header;
+-- SQLBook: Code
+SET search_path TO public, taxon;
+SELECT pg_hier_parse (
+        '
+    orders {
+        scientific_name,
+        common_name,
+        families {
+            scientific_name,
+            common_name,
+            genera {
+                scientific_name,
+                common_name 
+            },
+            species {
+                scientific_name, 
+                common_name
+            }
+        }
+    }
+'
+    );
+-- SQLBook: Code
+SET search_path TO public, taxon;
+SELECT jsonb_agg(
+        jsonb_build_object(
+            'scientific_name', orders.scientific_name, 'common_name', orders.common_name, 'families', (
+                SELECT jsonb_agg(
+                        json_build_object(
+                            'scientific_name', families.scientific_name, 'common_name', families.common_name, 'genera', (
+                                SELECT jsonb_agg(
+                                        json_build_object(
+                                            'scientific_name', genera.scientific_name, 'common_name', genera.common_name
+                                        )
+                                    )
+                                FROM genera
+                                WHERE
+                                    genera.family_id = families.family_id
+                            ), 'species', (
+                                SELECT jsonb_agg(
+                                        json_build_object(
+                                            'scientific_name', species.scientific_name, 'common_name', species.common_name
+                                        )
+                                    )
+                                FROM species
+                                    JOIN genera ON (
+                                        species.genus_id = genera.genus_id
+                                    )
+                                WHERE
+                                    genera.family_id = families.family_id
+                            )
+                        )
+                    )
+                FROM families
+                WHERE
+                    families.order_id = orders.order_id
+            )
+        )
+    )
+FROM orders
+-- SQLBook: Code
+SELECT 
+    jsonb_build_object(
+        'order_id', o.order_id,
+        'scientific_name', o.scientific_name,
+        'common_name', o.common_name,
+        'families', (
+            SELECT jsonb_agg(
+                jsonb_build_object(
+                    'family_id', f.family_id,
+                    'scientific_name', f.scientific_name,
+                    'common_name', f.common_name,
+                    'genera', (
+                        SELECT jsonb_agg(
+                            jsonb_build_object(
+                                'genus_id', g.genus_id,
+                                'scientific_name', g.scientific_name,
+                                'common_name', g.common_name,
+                                'species', (
+                                    SELECT jsonb_agg(
+                                        jsonb_build_object(
+                                            'species_id', s.species_id,
+                                            'scientific_name', s.scientific_name,
+                                            'common_name', s.common_name
+                                        )
+                                    )
+                                    FROM taxon.species s
+                                    WHERE s.genus_id = g.genus_id
+                                )
+                            )
+                        )
+                        FROM taxon.genera g
+                        WHERE g.family_id = f.family_id
+                    )
+                )
+            )
+            FROM taxon.families f
+            WHERE f.order_id = o.order_id
+        )
+    )
+
+FROM taxon.orders o;
+GROUP BY o.order_id, o.scientific_name, o.common_name

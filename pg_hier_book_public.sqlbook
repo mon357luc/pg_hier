@@ -1,0 +1,50 @@
+-- SQLBook: Code
+SELECT pg_hier_create_hier (
+        ARRAY[
+            'item', 'product', 'electronic_product', 'smartphone'
+        ], ARRAY[
+            NULL::TEXT, 'item_id', 'product_id', 'product_id:electronic_id'
+        ], ARRAY[
+            NULL::TEXT, 'item_id', 'product_id', 'product_id:electronic_id'
+        ]
+    )
+-- SQLBook: Code
+SELECT pg_hier (
+        '
+    item { 
+        name, 
+        product { 
+            product_id, 
+            smartphone { 
+                os,
+                storage_gb,
+                has_5g
+            }, 
+            item_id
+        }, 
+        description
+    }
+'
+    );
+-- SQLBook: Code
+SELECT jsonb_build_object(
+        'item', json_build_object(
+            'name', item.name, 
+            'product', json_build_object(
+                'product_id', product.product_id, 
+                'smartphone', json_build_object(
+                    'os', array_agg(smartphone.os), 
+                    'storage_gb', array_agg(smartphone.storage_gb), 
+                    'has_5g', array_agg(smartphone.has_5g)
+                ), 
+                'item_id', product.item_id
+            ), 
+            'description', item.description
+        )
+    )
+FROM
+    item
+    JOIN product ON item.item_id = product.item_id
+    JOIN electronic_product ON product.product_id = electronic_product.product_id
+    JOIN smartphone ON electronic_product.electronic_id = smartphone.electronic_id
+GROUP BY item.name, product.product_id, product.item_id, item.description

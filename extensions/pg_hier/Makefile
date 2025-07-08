@@ -1,17 +1,16 @@
-# Define the extension name (must match the .control file)
 EXTENSION = pg_hier
 
-# Use MODULE_big for single shared library built from multiple source files
 MODULE_big = $(EXTENSION)
 
 DATA = $(wildcard sql/*--*.sql)
 DOCS = $(wildcard doc/*.md)
-MODULES	= $(patsubst %.c,%,$(wildcard src/*.c))
+# MODULES	= $(patsubst %.c,%,$(wildcard src/*.c))
 OBJS = $(patsubst %.c,%.o,$(wildcard src/*.c))
 
-# Path to PostgreSQL's pg_config
-PG_CONFIG = pg_config
+SRCDIR = src
+PG_CFLAGS = -I ./include -g
+PG_CPPFLAGS = $(PG_CFLAGS)
 
-# Include the PGXS makefile
+PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
