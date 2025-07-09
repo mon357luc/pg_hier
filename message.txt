@@ -1,0 +1,392 @@
+table:
+  name: organization
+  schema: identity
+object_relationships:
+  - name: created_by_organization
+    using:
+      manual_configuration:
+        column_mapping:
+          created_by_organization_id: id
+        insertion_order: null
+        remote_table:
+          name: organization
+          schema: identity
+  - name: current_account_status
+    using:
+      manual_configuration:
+        column_mapping:
+          id: organization_id
+        insertion_order: null
+        remote_table:
+          name: current_organization_account_status
+          schema: identity
+  - name: current_archival_status
+    using:
+      manual_configuration:
+        column_mapping:
+          id: organization_id
+        insertion_order: null
+        remote_table:
+          name: current_organization_archival_status
+          schema: identity
+  - name: customer
+    using:
+      foreign_key_constraint_on: customer_id
+  - name: legal_entity
+    using:
+      manual_configuration:
+        column_mapping:
+          legal_entity_id: id
+        insertion_order: null
+        remote_table:
+          name: legal_entity
+          schema: tax
+  - name: organization_codat_company
+    using:
+      foreign_key_constraint_on:
+        column: organization_id
+        table:
+          name: company
+          schema: codat
+  - name: organization_custom_field_labels
+    using:
+      manual_configuration:
+        column_mapping:
+          id: organization_id
+        insertion_order: null
+        remote_table:
+          name: organization_custom_field_labels
+          schema: payment
+  - name: organization_project_custom_field_labels
+    using:
+      manual_configuration:
+        column_mapping:
+          id: organization_id
+        insertion_order: null
+        remote_table:
+          name: organization_project_custom_field_labels
+          schema: payment
+  - name: organization_usage_fee
+    using:
+      manual_configuration:
+        column_mapping:
+          id: organization_id
+        insertion_order: null
+        remote_table:
+          name: organization_usage_fee
+          schema: payment
+  - name: payment_terms
+    using:
+      foreign_key_constraint_on:
+        column: organization_id
+        table:
+          name: organization_payment_terms
+          schema: payment
+  - name: tenant
+    using:
+      manual_configuration:
+        column_mapping:
+          tenant_id: id
+        insertion_order: null
+        remote_table:
+          name: tenant
+          schema: platform
+  - name: usage_fee
+    using:
+      manual_configuration:
+        column_mapping:
+          id: organization_id
+        insertion_order: null
+        remote_table:
+          name: organization_usage_fee
+          schema: payment
+  - name: verification_status
+    using:
+      manual_configuration:
+        column_mapping:
+          id: organization_id
+        insertion_order: null
+        remote_table:
+          name: organization_verification_status
+          schema: identity
+array_relationships:
+  - name: accounts
+    using:
+      manual_configuration:
+        column_mapping:
+          id: organization_id
+        insertion_order: null
+        remote_table:
+          name: active_account
+          schema: ledger
+  - name: identifiers
+    using:
+      foreign_key_constraint_on:
+        column: organization_id
+        table:
+          name: organization_identifier
+          schema: identity
+  - name: instagram_allowlisting_grants_as_brand
+    using:
+      foreign_key_constraint_on:
+        column: brand_organization_id
+        table:
+          name: instagram_allowlisting_grant
+          schema: social
+  - name: msa_brand_documents
+    using:
+      manual_configuration:
+        column_mapping:
+          id: payor_organization_id
+        insertion_order: null
+        remote_table:
+          name: msa_brand_document
+          schema: payment
+  - name: organization_features
+    using:
+      manual_configuration:
+        column_mapping:
+          id: organization_id
+        insertion_order: null
+        remote_table:
+          name: organization_feature
+          schema: identity
+  - name: organization_instagram_advertisers
+    using:
+      foreign_key_constraint_on:
+        column: brand_organization_id
+        table:
+          name: instagram_advertiser
+          schema: social
+  - name: organization_instagram_channel_claims
+    using:
+      foreign_key_constraint_on:
+        column: organization_id
+        table:
+          name: instagram_channel_claim
+          schema: social
+  - name: organization_user_invites
+    using:
+      foreign_key_constraint_on:
+        column: organization_id
+        table:
+          name: organization_user_invite
+          schema: identity
+  - name: organization_user_permissions
+    using:
+      manual_configuration:
+        column_mapping:
+          id: organization_id
+        insertion_order: null
+        remote_table:
+          name: organization_user_permission
+          schema: identity
+  - name: organization_user_project_permissions
+    using:
+      manual_configuration:
+        column_mapping:
+          id: organization_id
+        insertion_order: null
+        remote_table:
+          name: organization_user_project_permission
+          schema: identity
+  - name: organization_users
+    using:
+      foreign_key_constraint_on:
+        column: organization_id
+        table:
+          name: organization_user
+          schema: identity
+  - name: payable_bulk_instant_pay_eligible
+    using:
+      manual_configuration:
+        column_mapping:
+          id: payee_organization_id
+        insertion_order: null
+        remote_table:
+          name: payable_bulk_instant_pay_eligible
+          schema: payment
+  - name: payee_payables
+    using:
+      manual_configuration:
+        column_mapping:
+          id: payee_organization_id
+        insertion_order: null
+        remote_table:
+          name: payee_payable
+          schema: payment
+  - name: projects
+    using:
+      foreign_key_constraint_on:
+        column: organization_id
+        table:
+          name: project
+          schema: payment
+  - name: taxable_line_item_adjustment_policies
+    using:
+      foreign_key_constraint_on:
+        column: payee_organization_id
+        table:
+          name: taxable_line_item_adjustment_policy
+          schema: payment
+  - name: terms_and_conditions_acceptance
+    using:
+      manual_configuration:
+        column_mapping:
+          id: organization_id
+        insertion_order: null
+        remote_table:
+          name: terms_and_conditions_acceptance
+          schema: tax
+  - name: wallet_transactions
+    using:
+      manual_configuration:
+        column_mapping:
+          id: organization_id
+        insertion_order: null
+        remote_table:
+          name: wallet_transaction
+          schema: ledger
+  - name: webhook_subscriptions
+    using:
+      foreign_key_constraint_on:
+        column: organization_id
+        table:
+          name: webhook_subscription
+          schema: zapier
+insert_permissions:
+  - role: tenant
+    permission:
+      check: {}
+      set:
+        tenant_id: x-hasura-Tenant-Id
+      columns:
+        - display_name
+        - tier
+    comment: ""
+select_permissions:
+  - role: public
+    permission:
+      columns:
+        - created_by_organization_id
+        - display_name
+        - id
+        - lumanu_verified
+        - metadata_funding_invoice_from
+        - metadata_invoice_additional_details
+        - profile_image_url
+      filter: {}
+      query_root_fields:
+        - select_by_pk
+      subscription_root_fields:
+        - select_by_pk
+  - role: tenant
+    permission:
+      columns:
+        - created_at
+        - display_name
+        - id
+        - profile_image_url
+        - tenant_id
+        - tier
+        - updated_at
+      filter:
+        tenant:
+          id:
+            _eq: X-Hasura-Tenant-Id
+      allow_aggregations: true
+    comment: ""
+  - role: user
+    permission:
+      columns:
+        - bsp_tag
+        - created_at
+        - created_by_organization_id
+        - default_external_account_id
+        - description
+        - display_name
+        - id
+        - lumanu_verified
+        - metadata_funding_invoice_from
+        - metadata_invoice_additional_details
+        - primary_denomination
+        - profile_image_url
+        - skip_lumanu_verification
+        - tier
+        - updated_at
+      filter:
+        _or:
+          - organization_user_permissions:
+              _and:
+                - auth0_user_id:
+                    _eq: X-Hasura-User-Id
+                - permission:
+                    _eq: organization:read
+          - organization_user_invites:
+              email:
+                _eq: X-Hasura-User-Email
+      allow_aggregations: true
+update_permissions:
+  - role: tenant
+    permission:
+      columns:
+        - display_name
+      filter:
+        tenant:
+          id:
+            _eq: X-Hasura-Tenant-Id
+      check:
+        tenant:
+          id:
+            _eq: X-Hasura-Tenant-Id
+    comment: ""
+  - role: user
+    permission:
+      columns:
+        - default_external_account_id
+        - display_name
+        - profile_image_url
+        - skip_lumanu_verification
+      filter:
+        organization_user_permissions:
+          _and:
+            - auth0_user_id:
+                _eq: X-Hasura-User-Id
+            - permission:
+                _eq: organization:write
+      check:
+        organization_user_permissions:
+          _and:
+            - auth0_user_id:
+                _eq: X-Hasura-User-Id
+            - permission:
+                _eq: organization:write
+event_triggers:
+  - name: identity_organization-handlePlatformEvent
+    definition:
+      enable_manual: false
+      insert:
+        columns: '*'
+      update:
+        columns: '*'
+    retry_conf:
+      interval_sec: 10
+      num_retries: 0
+      timeout_sec: 60
+    webhook: '{{SERVERLESS_HOST}}/eventTriggers/handlePlatformEvent'
+    headers:
+      - name: x-hasura-function-secret
+        value_from_env: HASURA_FUNCTION_SECRET
+  - name: organization-handleNewOrganization
+    definition:
+      enable_manual: false
+      insert:
+        columns: '*'
+    retry_conf:
+      interval_sec: 10
+      num_retries: 0
+      timeout_sec: 60
+    webhook: '{{SERVERLESS_HOST}}/eventTriggers/handleNewOrganization'
+    headers:
+      - name: x-hasura-function-secret
+        value_from_env: HASURA_FUNCTION_SECRET
