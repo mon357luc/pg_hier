@@ -12,6 +12,7 @@ SELECT pg_hier_create_hier (
     )
 -- SQLBook: Code
 SELECT * FROM pg_hier_header;
+SELECT * FROM pg_hier_detail;
 -- SQLBook: Code
 SET search_path TO public, taxon;
 SELECT pg_hier_parse (
@@ -24,18 +25,45 @@ SELECT pg_hier_parse (
             common_name,
             genera {
                 scientific_name,
-                common_name 
+                common_name, 
+                genus_id  
             },
             species {
                 scientific_name, 
-                common_name
-            }
-        }
-    }
+                common_name, 
+                species_id
+            } 
+        }, 
+        order_id
+    } WHERE order_id = 1
 '
-    );
+    ); --order_id = 1
 -- SQLBook: Code
 SET search_path TO public, taxon;
+SELECT pg_hier (
+        '
+    orders {
+        scientific_name,
+        common_name,
+        families {
+            scientific_name,
+            common_name,
+            genera {
+                scientific_name,
+                common_name, 
+                genus_id  
+            },
+            species {
+                scientific_name, 
+                common_name, 
+                species_id
+            } 
+        }, 
+        order_id
+    } WHERE order_id = 1
+'
+    ); --order_id = 1
+-- SQLBook: Code
 SELECT jsonb_agg(
         jsonb_build_object(
             'scientific_name', orders.scientific_name, 'common_name', orders.common_name, 'families', (
@@ -44,7 +72,7 @@ SELECT jsonb_agg(
                             'scientific_name', families.scientific_name, 'common_name', families.common_name, 'genera', (
                                 SELECT jsonb_agg(
                                         json_build_object(
-                                            'scientific_name', genera.scientific_name, 'common_name', genera.common_name
+                                            'scientific_name', genera.scientific_name, 'common_name', genera.common_name, 'genus_id', genera.genus_id
                                         )
                                     )
                                 FROM genera
@@ -53,7 +81,7 @@ SELECT jsonb_agg(
                             ), 'species', (
                                 SELECT jsonb_agg(
                                         json_build_object(
-                                            'scientific_name', species.scientific_name, 'common_name', species.common_name
+                                            'scientific_name', species.scientific_name, 'common_name', species.common_name, 'species_id', species.species_id
                                         )
                                     )
                                 FROM species
@@ -68,10 +96,12 @@ SELECT jsonb_agg(
                 FROM families
                 WHERE
                     families.order_id = orders.order_id
-            )
+            ), 'order_id', orders.order_id
         )
     )
 FROM orders
+WHERE
+    order_id = 1
 -- SQLBook: Code
 SELECT 
     jsonb_build_object(

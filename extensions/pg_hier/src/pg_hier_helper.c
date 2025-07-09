@@ -1,6 +1,7 @@
 #include "pg_hier_helper.h"
 
-void parse_input(StringInfo buf, const char *input, string_array **tables)
+void 
+parse_input(StringInfo buf, const char *input, string_array **tables)
 {
     table_stack *stack = NULL;
     hier_header *hh = NULL;
@@ -9,46 +10,38 @@ void parse_input(StringInfo buf, const char *input, string_array **tables)
     char *next_token = NULL;
     char *saveptr = NULL;
     bool first_column = true;
+    StringInfoData where_clause;
+    initStringInfo(&where_clause);
+    
     PG_TRY();
     {
         *tables = create_string_array();
         hh = CREATE_HIER_HEADER();
-
         input_copy = pstrdup(input);
-
         appendStringInfoString(buf, "jsonb_agg(jsonb_build_object(");
-
         token = GET_TOKEN(input_copy, &saveptr);
         next_token = GET_TOKEN(&saveptr);
-
         if (*token == '\0')
             elog(ERROR, "Expected table name");
-
         add_string_to_array(*tables, token);
-
         if (!first_column)
             appendStringInfoString(buf, ", ");
-
         stack = create_table_stack_entry(token, stack);
         token = GET_TOKEN(&saveptr);
         next_token = GET_TOKEN(&saveptr);
-
         while (token)
         {
             if (*token == '\0')
                 break;
-
             if (next_token && !strcmp(next_token, "{"))
             {
                 int hier_id;
                 add_string_to_array(*tables, token);
                 stack = create_table_stack_entry(token, stack);
-
                 if (!first_column)
                     appendStringInfoString(buf, ", ");
                 appendStringInfo(buf, 
                     "'%s', (SELECT jsonb_agg(json_build_object(", token);
-
                 first_column = true;
                 token = GET_TOKEN(&saveptr);
                 next_token = GET_TOKEN(&saveptr);
@@ -59,10 +52,8 @@ void parse_input(StringInfo buf, const char *input, string_array **tables)
                 {
                     if (*token == '\0')
                         break;
-
                     if (next_token && !strcmp(next_token, "{"))
                         break;
-
                     if (token && strcmp(token, "}") == 0)
                     {
                         if (stack == NULL)
@@ -72,31 +63,60 @@ void parse_input(StringInfo buf, const char *input, string_array **tables)
                         initStringInfo(&rel_buf);
                         char *child_table = pop_table_stack(&stack);
                         char *parent_table = NULL;
-
-                        // Append join to buffer
+                        
+                        token = next_token;
+                        next_token = GET_TOKEN(&saveptr);
+                        
+                        StringInfoData where_condition;
+                        initStringInfo(&where_condition);
+                        
+                        if (token && !strcmp(token, "WHERE")) {
+                            while (next_token && strcmp(next_token, "}") != 0 && strcmp(next_token, ";")) {
+                                appendStringInfo(&where_condition, "%s ", next_token);
+                                token = next_token;
+                                next_token = GET_TOKEN(&saveptr);
+                                if (!next_token) break;
+                            }
+                        }
+                        
                         if(stack)
                         {
                             parent_table = peek_table_stack(&stack);
                             pg_hier_get_hier(*tables, hh);
                             pg_hier_from_clause(&rel_buf, hh, parent_table, child_table);
-                            appendStringInfo(buf, ")) FROM %s )", rel_buf.data);
+                            appendStringInfo(buf, ")) FROM %s", rel_buf.data);
+                            
+                            if (where_condition.len > 0)
+                                appendStringInfo(buf, " AND %s", where_condition.data);
+                            
+                            appendStringInfoString(buf, " )");
                         } else {
-                            appendStringInfo(buf, ")) FROM %s ", child_table);
+                            appendStringInfo(buf, ")) FROM %s", child_table);
+                            
+                            if (where_condition.len > 0)
+                                appendStringInfo(buf, " WHERE %s", where_condition.data);
+                            pfree(where_condition.data);
+                            if (child_table)
+                                pfree(child_table);
+                            token = NULL;
+                            next_token = NULL;
                         }
-
-                        if (child_table)
-                            pfree(child_table);
-
-                        token = next_token;
-                        next_token = GET_TOKEN(&saveptr);
+                            
+                        if (!token || !next_token) break;
+                        
+                        if (!strcmp(token, "WHERE")) {
+                            token = next_token;
+                            next_token = GET_TOKEN(&saveptr);
+                        } else {
+                            token = token;
+                            next_token = next_token;
+                        }
                         continue;
                     }
-
                     if (first_column)
                         first_column = false;
                     else
                         appendStringInfoString(buf, ", ");
-
                     appendStringInfo(buf, "'%s', %s.%s",
                                      token, stack->table_name, token);
                     token = next_token;
@@ -104,21 +124,13 @@ void parse_input(StringInfo buf, const char *input, string_array **tables)
                 }
             }
         }
-
-        if (stack)
-            free_table_stack(&stack);
-
-        if (input_copy)
-            pfree(input_copy);
-        input_copy = NULL;
     }
-    PG_CATCH();
+    PG_FINALLY();
     {
         if (stack)
             free_table_stack(&stack);
         if (input_copy != NULL)
             pfree(input_copy);
-        PG_RE_THROW();
     }
     PG_END_TRY();
 }
@@ -230,8 +242,6 @@ pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *child)
         
         if (ret != SPI_OK_SELECT)
             elog(ERROR, "SPI_execute failed: %d", ret);
-        
-        elog(INFO, "Processed query, returned %d rows", SPI_processed);
         
         if (SPI_processed > 0) {
             bool first_join = true;
@@ -376,6 +386,41 @@ pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *child)
     PG_END_TRY();
     
     SPI_finish();
+}
+
+Datum
+pg_hier_return_one(const char *sql)
+{
+    int ret;
+    Datum result = (Datum) NULL;
+    bool is_null;
+    
+    if ((ret = SPI_connect()) < 0)
+        elog(ERROR, "SPI_connect failed: %s", SPI_result_code_string(ret));
+    
+    ret = SPI_execute(sql, true, 0);
+    
+    if (ret != SPI_OK_SELECT)
+    {
+        SPI_finish();
+        elog(ERROR, "SPI_execute failed: %s", SPI_result_code_string(ret));
+    }
+    
+    if (SPI_processed > 0 && SPI_tuptable != NULL)  
+    {
+        if (SPI_tuptable->vals[0] != NULL)  
+        {
+            bool isnull;
+            Datum val = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
+            
+            if (!isnull)
+                result = datumCopy(val, false, -1);
+        }
+    }
+
+    SPI_finish();
+
+    return result;
 }
 
 /**************************************
