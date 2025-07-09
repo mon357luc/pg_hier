@@ -17,21 +17,22 @@ PG_FUNCTION_INFO_V1(pg_hier);
  * AS 'MODULE_PATHNAME', 'pg_hier'
  * LANGUAGE C STRICT;
  ****************************/
-Datum pg_hier(PG_FUNCTION_ARGS)
+Datum 
+pg_hier(PG_FUNCTION_ARGS)
 {
     if (PG_ARGISNULL(0))
         PG_RETURN_NULL();
-
+    
     text *input_text = PG_GETARG_TEXT_PP(0);
     char *input = text_to_cstring(input_text);
     StringInfoData parse_buf;
     initStringInfo(&parse_buf);
-
     string_array *tables = NULL;
-
+    Datum result = (Datum) NULL;
+    
     appendStringInfoString(&parse_buf, "SELECT ");
     parse_input(&parse_buf, input, &tables);
-
+    
     if (tables == NULL || tables->size < 2)
     {
         if (tables == NULL)
@@ -48,42 +49,15 @@ Datum pg_hier(PG_FUNCTION_ARGS)
             ereport(ERROR, (errmsg("At least two tables are needed for hierarchical query.")));
         }
     }
-
-    free_string_array(tables);
-
-    // int hier_id = pg_hier_find_hier(tables);
-
-    // char *parent_table = pstrdup(tables->data[0]);
-    // char *child_table = pstrdup(tables->data[tables->size - 1]);
-
-    // pfree(input);
-    // if (tables->data)
-    //     for (int i = 0; i < tables->size; ++i)
-    //     {
-    //         pfree(tables->data[i]);
-    //     }
-    // pfree(tables->data);
-    // pfree(tables);
-
-    // StringInfoData join_buf;
-    // initStringInfo(&join_buf);
-
-    // Datum join_result = DirectFunctionCall2(pg_hier_join,
-    //                                         CStringGetTextDatum(parent_table),
-    //                                         CStringGetTextDatum(child_table));
     
-    // text *from_join_clause = DatumGetTextPP(join_result);
-    // char *from_join_clause_str = text_to_cstring(from_join_clause);
-    // appendStringInfoString(&join_buf, from_join_clause_str);
+    free_string_array(tables);
+    pfree(input);
+    
+    result = pg_hier_return_one(parse_buf.data);
 
-    // pfree(from_join_clause_str);
-    // pfree(parent_table);
-    // pfree(child_table);
-    // appendStringInfoString(&parse_buf, " ");
-    // appendStringInfoString(&parse_buf, join_buf.data);
-    // pfree(join_buf.data);
-
-    PG_RETURN_TEXT_P(cstring_to_text(parse_buf.data));
+    pfree(parse_buf.data);
+    
+    PG_RETURN_DATUM(result);
 }
 
 PG_FUNCTION_INFO_V1(pg_hier_parse);
@@ -124,8 +98,8 @@ Datum pg_hier_parse(PG_FUNCTION_ARGS)
             ereport(ERROR, (errmsg("At least two tables are needed for hierarchical query.")));
         }
     }
-    pfree(input);
     free_string_array(tables);
+    pfree(input);
 
     PG_RETURN_TEXT_P(cstring_to_text(parse_buf.data));
 }

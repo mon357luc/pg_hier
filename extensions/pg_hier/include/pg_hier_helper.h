@@ -10,6 +10,7 @@ static char *trim_whitespace(char *str);
 void pg_hier_get_hier(string_array *tables, hier_header *hh);
 void pg_hier_find_hier(string_array *tables, hier_header *hh);
 void pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *child);
+Datum pg_hier_return_one(const char *sql);
 string_array *reorder_tables(string_array *tables, char *hierarchy_string);
 static int compare_string_positions(const void *a, const void *b);
 JsonbValue datum_to_jsonb_value(Datum value_datum, Oid value_type);

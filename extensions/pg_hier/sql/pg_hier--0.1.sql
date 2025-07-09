@@ -38,7 +38,7 @@ CREATE INDEX IF NOT EXISTS idx_pg_hier_detail_name ON pg_hier_detail(name);
  * Define C source code functions
  **************************************/
 CREATE FUNCTION pg_hier(text) 
-RETURNS text
+RETURNS JSONB
 AS 'MODULE_PATHNAME', 'pg_hier'
 LANGUAGE C STRICT;
 
