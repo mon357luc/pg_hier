@@ -8,5 +8,6 @@ extern Datum pg_hier(PG_FUNCTION_ARGS);
 extern Datum pg_hier_parse(PG_FUNCTION_ARGS);
 extern Datum pg_hier_join(PG_FUNCTION_ARGS);
 extern Datum pg_hier_format(PG_FUNCTION_ARGS);
+extern Datum pg_hier_pathfind(PG_FUNCTION_ARGS);
 
 #endif /* PG_HIER_H */

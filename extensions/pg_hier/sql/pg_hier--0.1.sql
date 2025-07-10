@@ -57,8 +57,8 @@ RETURNS text
 AS 'MODULE_PATHNAME', 'pg_hier_format'
 LANGUAGE C STRICT;
 
-CREATE OR REPLACE FUNCTION pg_hier_pathfind(text, text)
-RETURNS text   
+CREATE OR REPLACE FUNCTION pg_hier_pathfind(start_name text, end_name text)
+RETURNS text[]
 AS 'MODULE_PATHNAME', 'pg_hier_pathfind'
 LANGUAGE C STRICT;
 
