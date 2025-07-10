@@ -57,6 +57,11 @@ RETURNS text
 AS 'MODULE_PATHNAME', 'pg_hier_format'
 LANGUAGE C STRICT;
 
+CREATE FUNCTION pg_hier_create_hier_nosuck(TEXT)
+RETURNS text
+AS 'MODULE_PATHNAME', 'pg_hier_create_hier_nosuck'
+LANGUAGE C STRICT;
+
 /**************************************
  * Define SQL source code functions
  **************************************/

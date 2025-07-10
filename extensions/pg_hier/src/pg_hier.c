@@ -381,3 +381,23 @@ Datum pg_hier_format(PG_FUNCTION_ARGS)
     SPI_finish();
     PG_RETURN_TEXT_P(cstring_to_text(buf.data));
 }
+
+PG_FUNCTION_INFO_V1(pg_hier_create_hier_nosuck);
+
+/**************************************
+ * CREATE FUNCTION pg_hier_create_hier_nosuck(TEXT)
+ * AS 'MODULE_PATHNAME', 'pg_hier_create_hier_nosuck'
+ * RETURNS text;
+ * LANGUAGE C STRICT;
+ **************************************/
+Datum pg_hier_create_hier_nosuck(PG_FUNCTION_ARGS)
+{
+    if (PG_ARGISNULL(0))
+        PG_RETURN_NULL();
+
+    text *input_text = PG_GETARG_TEXT_PP(0);
+    char *input_string = text_to_cstring(input_text);
+    elog(INFO, "input: %s", input_string);
+
+    PG_RETURN_TEXT_P(cstring_to_text("Done :)")); // this return value is pointless
+}
