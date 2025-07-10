@@ -1,7 +1,6 @@
 #include "pg_hier_helper.h"
 
-void 
-parse_input(StringInfo buf, const char *input, string_array **tables)
+void parse_input(StringInfo buf, const char *input, string_array **tables)
 {
     table_stack *stack = NULL;
     hier_header *hh = NULL;
@@ -12,7 +11,7 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
     bool first_column = true;
     StringInfoData where_clause;
     initStringInfo(&where_clause);
-    
+
     PG_TRY();
     {
         *tables = create_string_array();
@@ -40,8 +39,8 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
                 stack = create_table_stack_entry(token, stack);
                 if (!first_column)
                     appendStringInfoString(buf, ", ");
-                appendStringInfo(buf, 
-                    "'%s', (SELECT jsonb_agg(json_build_object(", token);
+                appendStringInfo(buf,
+                                 "'%s', (SELECT jsonb_agg(json_build_object(", token);
                 first_column = true;
                 token = GET_TOKEN(&saveptr);
                 next_token = GET_TOKEN(&saveptr);
@@ -57,42 +56,45 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
                     if (token && strcmp(token, "}") == 0)
                     {
                         if (stack == NULL)
-                            ereport(ERROR, 
-                                (errmsg("Unmatched closing brace in input")));
+                            ereport(ERROR,
+                                    (errmsg("Unmatched closing brace in input")));
                         StringInfoData rel_buf;
                         initStringInfo(&rel_buf);
                         char *child_table = pop_table_stack(&stack);
                         char *parent_table = NULL;
-                        
+
                         token = next_token;
                         next_token = GET_TOKEN(&saveptr);
-                        
+
                         StringInfoData where_condition;
                         initStringInfo(&where_condition);
-                        
-                        if (token && !strcmp(token, "WHERE")) {
-                            while (next_token && strcmp(next_token, "}") != 0 && strcmp(next_token, ";")) {
+
+                        if (token && !strcmp(token, "WHERE"))
+                        {
+                            while (next_token && strcmp(next_token, "}") != 0 && strcmp(next_token, ";") != 0)
+                            {
                                 appendStringInfo(&where_condition, "%s ", next_token);
                                 token = next_token;
                                 next_token = GET_TOKEN(&saveptr);
-                                if (!next_token) break;
                             }
                         }
-                        
-                        if(stack)
+
+                        if (stack)
                         {
                             parent_table = peek_table_stack(&stack);
                             pg_hier_get_hier(*tables, hh);
                             pg_hier_from_clause(&rel_buf, hh, parent_table, child_table);
                             appendStringInfo(buf, ")) FROM %s", rel_buf.data);
-                            
+
                             if (where_condition.len > 0)
                                 appendStringInfo(buf, " AND %s", where_condition.data);
-                            
+
                             appendStringInfoString(buf, " )");
-                        } else {
+                        }
+                        else
+                        {
                             appendStringInfo(buf, ")) FROM %s", child_table);
-                            
+
                             if (where_condition.len > 0)
                                 appendStringInfo(buf, " WHERE %s", where_condition.data);
                             pfree(where_condition.data);
@@ -101,13 +103,17 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
                             token = NULL;
                             next_token = NULL;
                         }
-                            
-                        if (!token || !next_token) break;
-                        
-                        if (!strcmp(token, "WHERE")) {
+
+                        if (!token || !next_token)
+                            break;
+
+                        if (!strcmp(token, "WHERE"))
+                        {
                             token = next_token;
                             next_token = GET_TOKEN(&saveptr);
-                        } else {
+                        }
+                        else
+                        {
                             token = token;
                             next_token = next_token;
                         }
@@ -135,8 +141,7 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
     PG_END_TRY();
 }
 
-void
-pg_hier_get_hier(string_array *tables, hier_header *hh)
+void pg_hier_get_hier(string_array *tables, hier_header *hh)
 {
     // Attempts to check 'cache,' if hh is null or
     // newest table isn't in hh, get new hh
@@ -144,13 +149,12 @@ pg_hier_get_hier(string_array *tables, hier_header *hh)
         pg_hier_find_hier(tables, hh);
     else
         for (int i = hh->deepest_nest; i < tables->size; i++)
-            if(!strstr(hh->hier, tables->data[i]))
+            if (!strstr(hh->hier, tables->data[i]))
                 pg_hier_find_hier(tables, hh);
     hh->deepest_nest = tables->size - 1;
 }
 
-void
-pg_hier_find_hier(string_array *tables, hier_header *hh)
+void pg_hier_find_hier(string_array *tables, hier_header *hh)
 {
     string_array *ordered_tables = NULL;
     char *hierarchy_string = NULL;
@@ -159,27 +163,25 @@ pg_hier_find_hier(string_array *tables, hier_header *hh)
     int ret;
 
     if (tables == NULL || tables->size < 2)
-        ereport(ERROR, 
-            (errmsg("Name path elements must contain at least two elements")));
+        ereport(ERROR,
+                (errmsg("Name path elements must contain at least two elements")));
 
     initStringInfo(&query);
     appendStringInfo(&query, "SELECT id, table_path FROM pg_hier_header WHERE ");
     for (int i = 0; i < tables->size; i++)
-        appendStringInfo(&query, 
-            (
-                (i > 0) ? 
-                " AND table_path LIKE '%%%s%%'" : 
-                "table_path LIKE '%%%s%%'"
-            ), tables->data[i]);
+        appendStringInfo(&query,
+                         (
+                             (i > 0) ? " AND table_path LIKE '%%%s%%'" : "table_path LIKE '%%%s%%'"),
+                         tables->data[i]);
 
     PG_TRY();
     {
         if ((ret = SPI_connect()) != SPI_OK_CONNECT)
             elog(ERROR, "SPI_connect failed: %d", ret);
-        
+
         if ((ret = SPI_execute(query.data, true, 0)) != SPI_OK_SELECT)
             elog(ERROR, "SPI_execute failed: %d", ret);
-        
+
         if (SPI_processed > 0)
         {
             HeapTuple tuple = SPI_tuptable->vals[0];
@@ -206,107 +208,114 @@ pg_hier_find_hier(string_array *tables, hier_header *hh)
     PG_END_TRY();
 }
 
-void 
-pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *child)
+void pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *child)
 {
     int ret;
-    
+
     // Input validation
-    if (!hh || !parent || !child) {
+    if (!hh || !parent || !child)
+    {
         elog(WARNING, "Missing required parameters for hierarchy lookup");
-        if (child) appendStringInfoString(buf, child);
+        if (child)
+            appendStringInfoString(buf, child);
         return;
     }
-    
+
     PG_TRY();
     {
         if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-                elog(ERROR, "SPI_connect failed: %d", ret);
-                
+            elog(ERROR, "SPI_connect failed: %d", ret);
+
         text *parent_text = parent ? cstring_to_text(parent) : NULL;
         text *child_text = child ? cstring_to_text(child) : NULL;
-        
+
         Oid argtypes[3] = {INT4OID, TEXTOID, TEXTOID};
         Datum values[3] = {
             Int32GetDatum(hh->hier_id),
             PointerGetDatum(parent_text),
-            PointerGetDatum(child_text)
-        };
-        
+            PointerGetDatum(child_text)};
+
         ret = SPI_execute_with_args(
-            PG_HIER_SQL_GET_HIER_BY_ID, 
+            PG_HIER_SQL_GET_HIER_BY_ID,
             3, argtypes, values, NULL, true, 0);
-            
-        if (parent_text) pfree(parent_text);
-        if (child_text) pfree(child_text);
-        
+
+        if (parent_text)
+            pfree(parent_text);
+        if (child_text)
+            pfree(child_text);
+
         if (ret != SPI_OK_SELECT)
             elog(ERROR, "SPI_execute failed: %d", ret);
-        
-        if (SPI_processed > 0) {
+
+        if (SPI_processed > 0)
+        {
             bool first_join = true;
             HeapTuple last_tuple = NULL;
             int last_idx = SPI_processed - 1;
-            
+
             appendStringInfoString(buf, child);
-            
-            for (int i = 0; i < last_idx; i++) {
+
+            for (int i = 0; i < last_idx; i++)
+            {
                 HeapTuple tuple = SPI_tuptable->vals[i];
                 bool isnull_parent, isnull_child, isnull_parent_key, isnull_child_key;
-                
+
                 Datum parent_name_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull_parent);
                 Datum parent_key_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 2, &isnull_parent_key);
                 Datum child_name_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 3, &isnull_child);
                 Datum child_key_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 4, &isnull_child_key);
-                
-                if (isnull_parent || isnull_child || isnull_parent_key || isnull_child_key) {
+
+                if (isnull_parent || isnull_child || isnull_parent_key || isnull_child_key)
+                {
                     elog(WARNING, "Row %d has NULL values in critical fields", i);
                     continue;
                 }
-                
+
                 char *parent_name = TextDatumGetCString(parent_name_datum);
                 char *child_name = TextDatumGetCString(child_name_datum);
-                
+
                 // Process array keys
                 ArrayType *parent_key_array = DatumGetArrayTypeP(parent_key_datum);
                 ArrayType *child_key_array = DatumGetArrayTypeP(child_key_datum);
-                
+
                 Datum *parent_key_elems, *child_key_elems;
                 bool *parent_key_nulls, *child_key_nulls;
                 int parent_key_nelems, child_key_nelems;
-                
+
                 int16 typlen;
                 bool typbyval;
                 char typalign;
-                
+
                 get_typlenbyvalalign(ARR_ELEMTYPE(parent_key_array), &typlen, &typbyval, &typalign);
-                deconstruct_array(parent_key_array, ARR_ELEMTYPE(parent_key_array), 
-                                 typlen, typbyval, typalign,
-                                 &parent_key_elems, &parent_key_nulls, &parent_key_nelems);
-                                 
+                deconstruct_array(parent_key_array, ARR_ELEMTYPE(parent_key_array),
+                                  typlen, typbyval, typalign,
+                                  &parent_key_elems, &parent_key_nulls, &parent_key_nelems);
+
                 get_typlenbyvalalign(ARR_ELEMTYPE(child_key_array), &typlen, &typbyval, &typalign);
-                deconstruct_array(child_key_array, ARR_ELEMTYPE(child_key_array), 
-                                 typlen, typbyval, typalign,
-                                 &child_key_elems, &child_key_nulls, &child_key_nelems);
-                
+                deconstruct_array(child_key_array, ARR_ELEMTYPE(child_key_array),
+                                  typlen, typbyval, typalign,
+                                  &child_key_elems, &child_key_nulls, &child_key_nelems);
+
                 appendStringInfo(buf, " JOIN %s ON (", parent_name);
-                
-                for (int j = 0; j < parent_key_nelems && j < child_key_nelems; j++) {
-                    if (j > 0) appendStringInfoString(buf, " AND ");
-                    
+
+                for (int j = 0; j < parent_key_nelems && j < child_key_nelems; j++)
+                {
+                    if (j > 0)
+                        appendStringInfoString(buf, " AND ");
+
                     char *parent_key = TextDatumGetCString(parent_key_elems[j]);
                     char *child_key = TextDatumGetCString(child_key_elems[j]);
-                    
-                    appendStringInfo(buf, "%s.%s = %s.%s", 
-                                   child_name, child_key, 
-                                   parent_name, parent_key);
-                                   
+
+                    appendStringInfo(buf, "%s.%s = %s.%s",
+                                     child_name, child_key,
+                                     parent_name, parent_key);
+
                     pfree(parent_key);
                     pfree(child_key);
                 }
-                
+
                 appendStringInfoString(buf, ")");
-                
+
                 pfree(parent_name);
                 pfree(child_name);
                 pfree(parent_key_elems);
@@ -314,57 +323,61 @@ pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *child)
                 pfree(parent_key_nulls);
                 pfree(child_key_nulls);
             }
-            
-            if (SPI_processed > 0) {
+
+            if (SPI_processed > 0)
+            {
                 HeapTuple tuple = SPI_tuptable->vals[last_idx];
                 bool isnull_parent, isnull_child, isnull_parent_key, isnull_child_key;
-                
+
                 Datum parent_name_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull_parent);
                 Datum parent_key_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 2, &isnull_parent_key);
                 Datum child_name_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 3, &isnull_child);
                 Datum child_key_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 4, &isnull_child_key);
-                
-                if (!isnull_parent && !isnull_child && !isnull_parent_key && !isnull_child_key) {
+
+                if (!isnull_parent && !isnull_child && !isnull_parent_key && !isnull_child_key)
+                {
                     char *parent_name = TextDatumGetCString(parent_name_datum);
                     char *child_name = TextDatumGetCString(child_name_datum);
-                    
+
                     ArrayType *parent_key_array = DatumGetArrayTypeP(parent_key_datum);
                     ArrayType *child_key_array = DatumGetArrayTypeP(child_key_datum);
-                    
+
                     Datum *parent_key_elems, *child_key_elems;
                     bool *parent_key_nulls, *child_key_nulls;
                     int parent_key_nelems, child_key_nelems;
-                    
+
                     int16 typlen;
                     bool typbyval;
                     char typalign;
-                    
+
                     get_typlenbyvalalign(ARR_ELEMTYPE(parent_key_array), &typlen, &typbyval, &typalign);
-                    deconstruct_array(parent_key_array, ARR_ELEMTYPE(parent_key_array), 
-                                     typlen, typbyval, typalign,
-                                     &parent_key_elems, &parent_key_nulls, &parent_key_nelems);
-                                     
+                    deconstruct_array(parent_key_array, ARR_ELEMTYPE(parent_key_array),
+                                      typlen, typbyval, typalign,
+                                      &parent_key_elems, &parent_key_nulls, &parent_key_nelems);
+
                     get_typlenbyvalalign(ARR_ELEMTYPE(child_key_array), &typlen, &typbyval, &typalign);
-                    deconstruct_array(child_key_array, ARR_ELEMTYPE(child_key_array), 
-                                     typlen, typbyval, typalign,
-                                     &child_key_elems, &child_key_nulls, &child_key_nelems);
-                    
+                    deconstruct_array(child_key_array, ARR_ELEMTYPE(child_key_array),
+                                      typlen, typbyval, typalign,
+                                      &child_key_elems, &child_key_nulls, &child_key_nelems);
+
                     appendStringInfoString(buf, " WHERE ");
-                    
-                    for (int j = 0; j < parent_key_nelems && j < child_key_nelems; j++) {
-                        if (j > 0) appendStringInfoString(buf, " AND ");
-                        
+
+                    for (int j = 0; j < parent_key_nelems && j < child_key_nelems; j++)
+                    {
+                        if (j > 0)
+                            appendStringInfoString(buf, " AND ");
+
                         char *parent_key = TextDatumGetCString(parent_key_elems[j]);
                         char *child_key = TextDatumGetCString(child_key_elems[j]);
-                        
-                        appendStringInfo(buf, "%s.%s = %s.%s", 
-                                       child_name, child_key, 
-                                       parent_name, parent_key);
-                                       
+
+                        appendStringInfo(buf, "%s.%s = %s.%s",
+                                         child_name, child_key,
+                                         parent_name, parent_key);
+
                         pfree(parent_key);
                         pfree(child_key);
                     }
-                    
+
                     // Clean up
                     pfree(parent_name);
                     pfree(child_name);
@@ -374,7 +387,9 @@ pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *child)
                     pfree(child_key_nulls);
                 }
             }
-        } else {
+        }
+        else
+        {
             appendStringInfoString(buf, child);
             elog(WARNING, "No hierarchy data found for parent=%s, child=%s", parent, child);
         }
@@ -384,35 +399,34 @@ pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *child)
         SPI_finish();
     }
     PG_END_TRY();
-    
+
     SPI_finish();
 }
 
-Datum
-pg_hier_return_one(const char *sql)
+Datum pg_hier_return_one(const char *sql)
 {
     int ret;
-    Datum result = (Datum) NULL;
+    Datum result = (Datum)NULL;
     bool is_null;
-    
+
     if ((ret = SPI_connect()) < 0)
         elog(ERROR, "SPI_connect failed: %s", SPI_result_code_string(ret));
-    
+
     ret = SPI_execute(sql, true, 0);
-    
+
     if (ret != SPI_OK_SELECT)
     {
         SPI_finish();
         elog(ERROR, "SPI_execute failed: %s", SPI_result_code_string(ret));
     }
-    
-    if (SPI_processed > 0 && SPI_tuptable != NULL)  
+
+    if (SPI_processed > 0 && SPI_tuptable != NULL)
     {
-        if (SPI_tuptable->vals[0] != NULL)  
+        if (SPI_tuptable->vals[0] != NULL)
         {
             bool isnull;
             Datum val = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
-            
+
             if (!isnull)
                 result = datumCopy(val, false, -1);
         }
@@ -452,7 +466,7 @@ reorder_tables(string_array *tables, char *hierarchy_string)
 {
     string_array *result = create_string_array();
 
-    struct table_position *positions = 
+    struct table_position *positions =
         palloc(tables->size * sizeof(struct table_position));
 
     for (int i = 0; i < tables->size; i++)
@@ -466,8 +480,8 @@ reorder_tables(string_array *tables, char *hierarchy_string)
             positions[i].hierarchy_position = strlen(hierarchy_string);
     }
 
-    qsort(positions, tables->size, sizeof(struct table_position), 
-                                        compare_string_positions);
+    qsort(positions, tables->size, sizeof(struct table_position),
+          compare_string_positions);
 
     if (tables->size)
         copy_string_array(result, tables);
@@ -477,7 +491,7 @@ reorder_tables(string_array *tables, char *hierarchy_string)
     return result;
 }
 
-static int 
+static int
 compare_string_positions(const void *a, const void *b)
 {
     struct table_position *posA = (struct table_position *)a;
@@ -593,7 +607,7 @@ get_or_create_array(Jsonb *existing_jsonb, char *key_str)
     }
     if (arr_parse_state != NULL)
     {
-        return JsonbValueToJsonb(pushJsonbValue(&arr_parse_state, 
+        return JsonbValueToJsonb(pushJsonbValue(&arr_parse_state,
                                                 WJB_END_ARRAY, NULL));
     }
     else
@@ -602,8 +616,7 @@ get_or_create_array(Jsonb *existing_jsonb, char *key_str)
     }
 }
 
-int 
-find_column_index(ColumnArrayState *state, text *column_name)
+int find_column_index(ColumnArrayState *state, text *column_name)
 {
     for (int i = 0; i < state->num_columns; i++)
     {
@@ -618,8 +631,7 @@ find_column_index(ColumnArrayState *state, text *column_name)
     return -1;
 }
 
-void 
-datum_to_jsonb(Datum val, Oid val_type, JsonbValue *result)
+void datum_to_jsonb(Datum val, Oid val_type, JsonbValue *result)
 {
     switch (val_type)
     {

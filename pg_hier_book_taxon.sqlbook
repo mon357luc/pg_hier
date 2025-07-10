@@ -32,7 +32,7 @@ SELECT pg_hier_parse (
                 scientific_name, 
                 common_name, 
                 species_id
-            } 
+            } WHERE species_id = 1
         }, 
         order_id
     } WHERE order_id = 1
