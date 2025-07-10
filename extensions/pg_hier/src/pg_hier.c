@@ -381,3 +381,134 @@ Datum pg_hier_format(PG_FUNCTION_ARGS)
     SPI_finish();
     PG_RETURN_TEXT_P(cstring_to_text(buf.data));
 }
+
+PG_FUNCTION_INFO_V1(pg_hier_pathfind);
+/*
+ * CREATE FUNCTION pg_hier_pathfind(TEXT, TEXT)
+ * RETURNS TEXT[]
+ * AS 'MODULE_PATHNAME', 'pg_hier_pathfind'
+ * LANGUAGE C STRICT;
+ */
+Datum pg_hier_pathfind(PG_FUNCTION_ARGS)
+{
+    if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
+        PG_RETURN_NULL();
+
+    text *start_text = PG_GETARG_TEXT_PP(0);
+    text *end_text = PG_GETARG_TEXT_PP(1);
+    char *start = text_to_cstring(start_text);
+    char *end = text_to_cstring(end_text);
+
+    int ret = SPI_connect();
+    if (ret != SPI_OK_CONNECT)
+        elog(ERROR, "SPI_connect failed: %d", ret);
+
+    // Query all edges from pg_hier_detail
+    const char *fetch_edges =
+        "SELECT parent, child, parent_key, child_key FROM pg_hier_detail";
+    ret = SPI_execute(fetch_edges, true, 0);
+    if (ret != SPI_OK_SELECT)
+    {
+        SPI_finish();
+        elog(ERROR, "SPI_execute failed: %d", ret);
+    }
+
+    // Build adjacency list in memory
+    typedef struct Edge {
+        char *parent;
+        char *child;
+        char *parent_key;
+        char *child_key;
+    } Edge;
+
+    int edge_count = SPI_processed;
+    Edge *edges = palloc0(sizeof(Edge) * edge_count);
+    for (int i = 0; i < edge_count; i++) {
+        HeapTuple tuple = SPI_tuptable->vals[i];
+        TupleDesc tupdesc = SPI_tuptable->tupdesc;
+        bool isnull;
+        edges[i].parent = text_to_cstring(DatumGetTextP(SPI_getbinval(tuple, tupdesc, 1, &isnull)));
+        edges[i].child = text_to_cstring(DatumGetTextP(SPI_getbinval(tuple, tupdesc, 2, &isnull)));
+        edges[i].parent_key = text_to_cstring(DatumGetTextP(SPI_getbinval(tuple, tupdesc, 3, &isnull)));
+        edges[i].child_key = text_to_cstring(DatumGetTextP(SPI_getbinval(tuple, tupdesc, 4, &isnull)));
+    }
+
+    // BFS queue
+    typedef struct PathNode {
+        char *name;
+        char **path;
+        int path_len;
+    } PathNode;
+
+    int max_nodes = 256;
+    PathNode *queue = palloc0(sizeof(PathNode) * max_nodes);
+    int front = 0, back = 0;
+
+    // Visited hash (very simple, linear search)
+    char **visited = palloc0(sizeof(char*) * max_nodes);
+    int visited_count = 0;
+
+    // Start node
+    queue[back].name = pstrdup(start);
+    queue[back].path = palloc0(sizeof(char*) * max_nodes);
+    queue[back].path[0] = pstrdup(start);
+    queue[back].path_len = 1;
+    back++;
+
+    int found = 0;
+    char **result_path = NULL;
+    int result_path_len = 0;
+
+    while (front < back && !found) {
+        PathNode current = queue[front++];
+        // Check if visited
+        int already_visited = 0;
+        for (int v = 0; v < visited_count; v++) {
+            if (strcmp(visited[v], current.name) == 0) {
+                already_visited = 1;
+                break;
+            }
+        }
+        if (already_visited)
+            continue;
+        visited[visited_count++] = current.name;
+
+        if (strcmp(current.name, end) == 0) {
+            found = 1;
+            result_path = current.path;
+            result_path_len = current.path_len;
+            break;
+        }
+
+        // For each edge from current node
+        for (int i = 0; i < edge_count; i++) {
+            if (strcmp(edges[i].parent, current.name) == 0) {
+                // Compose key string: table.key
+                char *step = psprintf("%s.%s", edges[i].child, edges[i].child_key);
+                // Build new path
+                char **new_path = palloc0(sizeof(char*) * max_nodes);
+                for (int j = 0; j < current.path_len; j++)
+                    new_path[j] = pstrdup(current.path[j]);
+                new_path[current.path_len] = step;
+                // Enqueue
+                queue[back].name = pstrdup(edges[i].child);
+                queue[back].path = new_path;
+                queue[back].path_len = current.path_len + 1;
+                back++;
+            }
+        }
+    }
+
+    ArrayType *result;
+    if (found) {
+        Datum *elems = palloc0(sizeof(Datum) * result_path_len);
+        for (int i = 0; i < result_path_len; i++)
+            elems[i] = CStringGetTextDatum(result_path[i]);
+        result = construct_array(elems, result_path_len, TEXTOID, -1, false, 'i');
+    } else {
+        result = construct_array(NULL, 0, TEXTOID, -1, false, 'i');
+    }
+
+    SPI_finish();
+    PG_RETURN_ARRAYTYPE_P(result);
+}
