@@ -382,6 +382,24 @@ Datum pg_hier_format(PG_FUNCTION_ARGS)
     PG_RETURN_TEXT_P(cstring_to_text(buf.data));
 }
 
+// Helper for parsing input data in pg_hier_create_hier. Returns new value for
+// i.
+int get_next_token(char *input_string, int i, char **token_return_param) {
+    *token_return_param = input_string + i;
+    while (input_string[i] != '\0' && input_string[i] != ' ' && input_string[i] != '\t') {
+        i++;
+    }
+
+    // At this point, the current character is now whitespace. We can split
+    // the input string here.
+    input_string[i] = '\0';
+    i++;
+
+    elog(INFO, "Found token: '%s'", *token_return_param);
+
+    return i;
+}
+
 PG_FUNCTION_INFO_V1(pg_hier_create_hier_nosuck);
 
 /**************************************
@@ -397,7 +415,50 @@ Datum pg_hier_create_hier_nosuck(PG_FUNCTION_ARGS)
 
     text *input_text = PG_GETARG_TEXT_PP(0);
     char *input_string = text_to_cstring(input_text);
-    elog(INFO, "input: %s", input_string);
+
+    int i;
+    char *token = NULL;
+    char *parent_name = NULL;
+    char *child_name = NULL;
+
+    i = 0;
+    while (input_string[i] != '\0') {
+        if (input_string[i] == '\r' || input_string[i] == '\n' || input_string[i] == '\t') {
+            i++;
+            continue;
+        }
+
+        elog(INFO, "Parsing line...", input_string);
+
+        i = get_next_token(input_string, i, &parent_name);
+        i = get_next_token(input_string, i, &token);
+        // NOTE no need to use the safer strncmp because get_next_token ensures
+        // that the token is proper null-terminated
+        if (strcmp("has", token) != 0) {
+            elog(ERROR, "Expected 'has' after '%s' (position %d)", parent_name, i);
+        }
+        i = get_next_token(input_string, i, &token);
+        if (strcmp("child", token) != 0) {
+            elog(ERROR, "Expected 'child' after '%s has' (position %d)", parent_name, i);
+        }
+        i = get_next_token(input_string, i, &child_name);
+
+        i = get_next_token(input_string, i, &token);
+        if (strcmp("using", token) == 0) {
+            // expect 'key'
+            elog(INFO, "Using");
+        } else if (strcmp("on", token) == 0) {
+            // expect 'name1.key = name2.key'
+            elog(INFO, "On");
+        } else {
+            elog(ERROR, "Expected 'on' or 'using' after child '%s' (position %d)", child_name, i);
+        }
+
+        // everything up to here works fine
+
+    }
+
+    pfree(input_string);
 
     PG_RETURN_TEXT_P(cstring_to_text("Done :)")); // this return value is pointless
 }
