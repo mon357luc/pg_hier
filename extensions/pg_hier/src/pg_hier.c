@@ -386,16 +386,18 @@ Datum pg_hier_format(PG_FUNCTION_ARGS)
 // i.
 int get_next_token(char *input_string, int i, char **token_return_param) {
     *token_return_param = input_string + i;
-    while (input_string[i] != '\0' && input_string[i] != ' ' && input_string[i] != '\t') {
-        i++;
+    while (input_string[i] != '\0' && input_string[i] != ' ' &&
+           input_string[i] != '\t' && input_string[i] != '\r' &&
+           input_string[i] != '\n') {
+      i++;
     }
 
-    // At this point, the current character is now whitespace. We can split
-    // the input string here.
+    // The current character is now whitespace. We can safely overwrite it,
+    // splitting the input string.
     input_string[i] = '\0';
     i++;
 
-    elog(INFO, "Found token: '%s'", *token_return_param);
+    // elog(INFO, "Found token: '%s'", *token_return_param);
 
     return i;
 }
@@ -420,6 +422,12 @@ Datum pg_hier_create_hier_nosuck(PG_FUNCTION_ARGS)
     char *token = NULL;
     char *parent_name = NULL;
     char *child_name = NULL;
+    // For 'on' statements, only the parent key should be used. For 'using'
+    // statements, both parent and child keys are needed.
+    char *parent_key = NULL;
+    char *child_key = NULL;
+
+    int hier_id = 1; // TODO implement this counter
 
     i = 0;
     while (input_string[i] != '\0') {
@@ -428,7 +436,7 @@ Datum pg_hier_create_hier_nosuck(PG_FUNCTION_ARGS)
             continue;
         }
 
-        elog(INFO, "Parsing line...", input_string);
+        // elog(INFO, "Parsing line...", input_string);
 
         i = get_next_token(input_string, i, &parent_name);
         i = get_next_token(input_string, i, &token);
@@ -446,15 +454,52 @@ Datum pg_hier_create_hier_nosuck(PG_FUNCTION_ARGS)
         i = get_next_token(input_string, i, &token);
         if (strcmp("using", token) == 0) {
             // expect 'key'
-            elog(INFO, "Using");
+            i = get_next_token(input_string, i, &parent_key);
+            elog(INFO, "Parsed hierarchy relationship: '%s' has child '%s' using '%s'", parent_name, child_name, parent_key);
+            // TODO now we'll do some kind of SPI call like this:
+            // INSERT INTO pg_hier_detail (parent, child, parent_key, child_key) VALUES (parent_name, child_name, parent_key, parent_key);
+            // (once we know what the schema of that table is)
         } else if (strcmp("on", token) == 0) {
+
+            elog(ERROR, "'on' not yet supported, use 'using' instead");
+
             // expect 'name1.key = name2.key'
-            elog(INFO, "On");
+
+            // token = input_string + i;
+            // while (input_string[i] != '.') {
+            //     i++;
+            // }
+            // input_string[i] = '\0';
+            // i++;
+            // elog(INFO, "Found LHS of 'on' token: '%s'", token);
+            // if (strcmp(parent_name, token) == 0) {
+            // } else if (strcmp(child_name, token) == 0) {
+            // } else {
+            //     // elog(ERROR, "Unrecognized name '%s', expected '%s' or '%s' (position %d)");
+            // }
+            // i = get_next_token(input_string, i, &token);
+            // elog(INFO, "Found RHS of 'on' token: '%s'", token);
+            //
+            // i = get_next_token(input_string, i, &token);
+            // if (strcmp("=", token) == 0 {
+            //     // elog(ERROR, "Expected '=' after 'on %s.%s' (position %d)", , ,i);
+            // }
+            //
+            // token = input_string + i;
+            // while (input_string[i] != '.') {
+            //     i++;
+            // }
+            // input_string[i] = '\0';
+            // i++;
+            // elog(INFO, "Found LHS of 'on' token: '%s'", token);
+            // i = get_next_token(input_string, i, &token);
+            // elog(INFO, "Found RHS of 'on' token: '%s'", token);
+
+            // elog(INFO, "Parsed hierarchy relationship: '%s' has child '%s' on '%s.%s = %s.%s'", parent_name, child_name, parent_key);
+
         } else {
             elog(ERROR, "Expected 'on' or 'using' after child '%s' (position %d)", child_name, i);
         }
-
-        // everything up to here works fine
 
     }
 
