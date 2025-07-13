@@ -1,144 +1,250 @@
 #include "pg_hier_helper.h"
 
+/**************************************
+ * Input parsing function
+ *
+ * This function parses the input
+ * based on the next token
+ * and builds the SQL query
+ **************************************/
 void parse_input(StringInfo buf, const char *input, string_array **tables)
 {
     table_stack *stack = NULL;
     hier_header *hh = NULL;
+    char *where_clause = NULL;
+    char *parent_table = NULL;
+    char *child_table = NULL;
     char *input_copy = NULL;
     char *token = NULL;
     char *next_token = NULL;
     char *saveptr = NULL;
-    bool first_column = true;
-    StringInfoData where_clause;
-    initStringInfo(&where_clause);
+
+    MemoryContext old_context = MemoryContextSwitchTo(TopMemoryContext);
+
+    StringInfoData rel_buf;
+    initStringInfo(&rel_buf);
+
+    StringInfo cur_buf = buf;
 
     PG_TRY();
     {
         *tables = create_string_array();
         hh = CREATE_HIER_HEADER();
         input_copy = pstrdup(input);
-        appendStringInfoString(buf, "jsonb_agg(jsonb_build_object(");
+
+        // get first token (table name) and { or [
         token = GET_TOKEN(input_copy, &saveptr);
         next_token = GET_TOKEN(&saveptr);
-        if (*token == '\0')
-            elog(ERROR, "Expected table name");
-        add_string_to_array(*tables, token);
-        if (!first_column)
-            appendStringInfoString(buf, ", ");
-        stack = create_table_stack_entry(token, stack);
-        token = GET_TOKEN(&saveptr);
-        next_token = GET_TOKEN(&saveptr);
-        while (token)
+
+        if (!token || *token == '\0')
+            elog(ERROR, "Empty input string or no valid table name found.");
+
+        do
         {
-            if (*token == '\0')
-                break;
-            if (next_token && !strcmp(next_token, "{"))
+            elog(INFO, "Current token: %16s, Next token: %16s", token, next_token);
+            switch (*next_token)
             {
-                int hier_id;
-                add_string_to_array(*tables, token);
-                stack = create_table_stack_entry(token, stack);
-                if (!first_column)
-                    appendStringInfoString(buf, ", ");
-                appendStringInfo(buf,
-                                 "'%s', (SELECT jsonb_agg(json_build_object(", token);
-                first_column = true;
-                token = GET_TOKEN(&saveptr);
+            case '[': // Begin where clause
+                child_table = pstrdup(token);
+                add_string_to_array(*tables, child_table);
+                stack = create_table_stack_entry(child_table, stack);
+                token = next_token;
                 next_token = GET_TOKEN(&saveptr);
-            }
-            else
-            {
-                while (token)
+                cur_buf = &stack->where_condition;
+                elog(INFO, "Entering where clause: %s", child_table);
+                while (next_token && strcmp(next_token, "]"))
                 {
-                    if (*token == '\0')
-                        break;
-                    if (next_token && !strcmp(next_token, "{"))
-                        break;
-                    if (token && strcmp(token, "}") == 0)
-                    {
-                        if (stack == NULL)
-                            ereport(ERROR,
-                                    (errmsg("Unmatched closing brace in input")));
-                        StringInfoData rel_buf;
-                        initStringInfo(&rel_buf);
-                        char *child_table = pop_table_stack(&stack);
-                        char *parent_table = NULL;
-
-                        token = next_token;
-                        next_token = GET_TOKEN(&saveptr);
-
-                        StringInfoData where_condition;
-                        initStringInfo(&where_condition);
-
-                        if (token && !strcmp(token, "WHERE"))
-                        {
-                            while (next_token && strcmp(next_token, "}") != 0 && strcmp(next_token, ";") != 0)
-                            {
-                                appendStringInfo(&where_condition, "%s ", next_token);
-                                token = next_token;
-                                next_token = GET_TOKEN(&saveptr);
-                            }
-                        }
-
-                        if (stack)
-                        {
-                            parent_table = peek_table_stack(&stack);
-                            pg_hier_get_hier(*tables, hh);
-                            pg_hier_from_clause(&rel_buf, hh, parent_table, child_table);
-                            appendStringInfo(buf, ")) FROM %s", rel_buf.data);
-
-                            if (where_condition.len > 0)
-                                appendStringInfo(buf, " AND %s", where_condition.data);
-
-                            appendStringInfoString(buf, " )");
-                        }
-                        else
-                        {
-                            appendStringInfo(buf, ")) FROM %s", child_table);
-
-                            if (where_condition.len > 0)
-                                appendStringInfo(buf, " WHERE %s", where_condition.data);
-                            pfree(where_condition.data);
-                            if (child_table)
-                                pfree(child_table);
-                            token = NULL;
-                            next_token = NULL;
-                        }
-
-                        if (!token || !next_token)
-                            break;
-
-                        if (!strcmp(token, "WHERE"))
-                        {
-                            token = next_token;
-                            next_token = GET_TOKEN(&saveptr);
-                        }
-                        else
-                        {
-                            token = token;
-                            next_token = next_token;
-                        }
-                        continue;
-                    }
-                    if (first_column)
-                        first_column = false;
-                    else
-                        appendStringInfoString(buf, ", ");
-                    appendStringInfo(buf, "'%s', %s.%s",
-                                     token, stack->table_name, token);
+                    appendStringInfo(cur_buf, "%s ", next_token);
                     token = next_token;
                     next_token = GET_TOKEN(&saveptr);
                 }
+                cur_buf = buf;
+                elog(INFO, "Leaving where clause: %s", child_table);
+                break;
+
+            case ']': // End where clause
+                break;
+
+            case '{': // Begin subquery
+                if (strcmp(token, "]"))
+                {
+                    child_table = pstrdup(token);
+                    add_string_to_array(*tables, child_table);
+                    stack = create_table_stack_entry(child_table, stack);
+                }
+                else
+                {
+                    child_table = pstrdup(stack->table_name);
+                }
+
+                if (stack->next && !stack->next->first_column)
+                    appendStringInfoString(cur_buf, ", ");
+                appendStringInfo(cur_buf, "'%s', (SELECT jsonb_agg(jsonb_build_object(", child_table);
+
+                pfree(child_table);
+                child_table = NULL;
+                break;
+
+            case '}': // End subquery
+                if (!is_special_char(*token))
+                {
+                    if (stack && !stack->first_column)
+                        appendStringInfoString(cur_buf, ", ");
+                    else
+                        stack->first_column = false;
+                    appendStringInfo(cur_buf, "'%s', %s.%s", token, stack->table_name, token);
+                }
+                if (stack == NULL)
+                    ereport(ERROR, (errmsg("Unmatched closing brace in input")));
+
+                if (stack->where_condition.len > 0)
+                {
+                    where_clause = pstrdup(stack->where_condition.data);
+                }
+                child_table = pop_table_stack(&stack);
+                parent_table = peek_table_stack(&stack);
+
+                if (parent_table)
+                {
+                    pg_hier_get_hier(*tables, hh);
+                    pg_hier_from_clause(&rel_buf, hh, parent_table, child_table);
+                    appendStringInfo(cur_buf, ")) FROM %s", rel_buf.data);
+                    resetStringInfo(&rel_buf);
+
+                    if (where_clause)
+                    {
+                        appendStringInfo(cur_buf, " AND %s", where_clause);
+                        pfree(where_clause);
+                        where_clause = NULL;
+                    }
+                    appendStringInfoString(cur_buf, ")");
+                    pfree(parent_table);
+                    parent_table = NULL;
+                }
+                else
+                {
+                    appendStringInfo(cur_buf, ")) FROM %s", child_table);
+                    if (where_clause)
+                    {
+                        appendStringInfo(cur_buf, " WHERE %s", where_clause);
+                        pfree(where_clause);
+                        where_clause = NULL;
+                    }
+                }
+                pfree(child_table);
+                child_table = NULL;
+                break;
+
+            case ',': // Next column
+            case '(':
+            case ')':
+            case ';':
+            default:
+                if (!stack)
+                {
+                    break;
+                }
+                else if (is_special_char(*token))
+                {
+                    break;
+                }
+                else if (!stack->first_column)
+                {
+                    appendStringInfo(cur_buf, ", '%s', %s.%s", token, stack->table_name, token);
+                }
+                else
+                {
+                    appendStringInfo(cur_buf, "'%s', %s.%s", token, stack->table_name, token);
+                    stack->first_column = false;
+                }
+                break;
             }
-        }
+            token = next_token;
+            next_token = GET_TOKEN(&saveptr);
+        } while (next_token && *next_token != '\0');
+        appendStringInfoString(cur_buf, ")));");
     }
     PG_FINALLY();
     {
-        if (stack)
-            free_table_stack(&stack);
-        if (input_copy != NULL)
-            pfree(input_copy);
+        MemoryContextSwitchTo(old_context);
     }
     PG_END_TRY();
+}
+
+static char *
+first_token(const char *input, char **saveptr)
+{
+    if (!input)
+        return NULL;
+    *saveptr = (char *)input;
+    return get_next_token(saveptr);
+}
+
+static char *
+get_next_token(char **saveptr)
+{
+    char *s = *saveptr;
+    if (!s)
+        return NULL;
+
+    while (*s && isspace((unsigned char)*s))
+        s++;
+
+    if (*s == '\0')
+    {
+        *saveptr = s;
+        return NULL;
+    }
+
+    if (is_special_char(*s))
+    {
+        char *tok = s;
+        s++;
+        *saveptr = s;
+        char *result = palloc(2);
+        result[0] = *tok;
+        result[1] = '\0';
+        return result;
+    }
+
+    // Handle regular tokens
+    char *start = s;
+    while (*s && !isspace((unsigned char)*s) && !is_special_char(*s))
+        s++;
+
+    size_t len = s - start;
+    char *result = palloc(len + 1);
+    strncpy(result, start, len);
+    result[len] = '\0';
+    *saveptr = s;
+
+    return result;
+}
+
+static inline bool
+is_special_char(char c)
+{
+    return (c == '{' || c == '}' || c == '[' || c == ']' || c == '(' || c == ')' || c == ',' || c == ';');
+}
+
+/**************************************
+ * Helper function to trim
+ * whitespace from a string
+ **************************************/
+static char *
+trim_whitespace(char *str)
+{
+    if (str == NULL)
+        return NULL;
+    while (isspace((unsigned char)*str))
+        str++;
+    if (*str == 0)
+        return str;
+    char *end = str + strlen(str) - 1;
+    while (end > str && isspace((unsigned char)*end))
+        end--;
+    end[1] = '\0';
+    return str;
 }
 
 void pg_hier_get_hier(string_array *tables, hier_header *hh)
@@ -435,26 +541,6 @@ Datum pg_hier_return_one(const char *sql)
     SPI_finish();
 
     return result;
-}
-
-/**************************************
- * Helper function to trim
- * whitespace from a string
- **************************************/
-static char *
-trim_whitespace(char *str)
-{
-    if (str == NULL)
-        return NULL;
-    while (isspace((unsigned char)*str))
-        str++;
-    if (*str == 0)
-        return str;
-    char *end = str + strlen(str) - 1;
-    while (end > str && isspace((unsigned char)*end))
-        end--;
-    end[1] = '\0';
-    return str;
 }
 
 /**************************************

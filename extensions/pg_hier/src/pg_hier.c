@@ -17,22 +17,21 @@ PG_FUNCTION_INFO_V1(pg_hier);
  * AS 'MODULE_PATHNAME', 'pg_hier'
  * LANGUAGE C STRICT;
  ****************************/
-Datum 
-pg_hier(PG_FUNCTION_ARGS)
+Datum pg_hier(PG_FUNCTION_ARGS)
 {
     if (PG_ARGISNULL(0))
         PG_RETURN_NULL();
-    
+
     text *input_text = PG_GETARG_TEXT_PP(0);
     char *input = text_to_cstring(input_text);
     StringInfoData parse_buf;
     initStringInfo(&parse_buf);
     string_array *tables = NULL;
-    Datum result = (Datum) NULL;
-    
-    appendStringInfoString(&parse_buf, "SELECT ");
+    Datum result = (Datum)NULL;
+
+    appendStringInfoString(&parse_buf, "SELECT jsonb_agg(jsonb_build_object(");
     parse_input(&parse_buf, input, &tables);
-    
+
     if (tables == NULL || tables->size < 2)
     {
         if (tables == NULL)
@@ -49,14 +48,14 @@ pg_hier(PG_FUNCTION_ARGS)
             ereport(ERROR, (errmsg("At least two tables are needed for hierarchical query.")));
         }
     }
-    
+
     free_string_array(tables);
     pfree(input);
-    
+
     result = pg_hier_return_one(parse_buf.data);
 
     pfree(parse_buf.data);
-    
+
     PG_RETURN_DATUM(result);
 }
 
@@ -79,24 +78,14 @@ Datum pg_hier_parse(PG_FUNCTION_ARGS)
 
     string_array *tables = NULL;
 
-    appendStringInfoString(&parse_buf, "SELECT ");
+    appendStringInfoString(&parse_buf, "SELECT jsonb_agg(jsonb_build_object(");
     parse_input(&parse_buf, input, &tables);
 
-    if (tables == NULL || tables->size < 2)
+    if (tables == NULL)
     {
-        if (tables == NULL)
-        {
-            pfree(input);
-            pfree(parse_buf.data);
-            ereport(ERROR, (errmsg("No tables found in input string.")));
-        }
-        else
-        {
-            pfree(input);
-            pfree(parse_buf.data);
-            free_string_array(tables);
-            ereport(ERROR, (errmsg("At least two tables are needed for hierarchical query.")));
-        }
+        pfree(input);
+        pfree(parse_buf.data);
+        ereport(ERROR, (errmsg("No tables found in input string.")));
     }
     free_string_array(tables);
     pfree(input);

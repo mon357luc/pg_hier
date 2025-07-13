@@ -13,6 +13,8 @@ typedef struct string_array
 typedef struct table_stack
 {
     char *table_name;
+    bool first_column;
+    StringInfoData where_condition;
     struct table_stack *next;
 } table_stack;
 

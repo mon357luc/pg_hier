@@ -13,8 +13,7 @@ create_string_array(void)
     return arr;
 }
 
-void 
-add_string_to_array(string_array *arr, char *value)
+void add_string_to_array(string_array *arr, char *value)
 {
     if ((arr->size + 1) >= arr->capacity)
     {
@@ -24,8 +23,7 @@ add_string_to_array(string_array *arr, char *value)
     arr->data[arr->size++] = pstrdup(value);
 }
 
-void 
-copy_string_array(string_array *to, string_array *from)
+void copy_string_array(string_array *to, string_array *from)
 {
     to->data = palloc(from->size * sizeof(char *));
     to->size = from->size;
@@ -35,8 +33,7 @@ copy_string_array(string_array *to, string_array *from)
         to->data[i] = pstrdup(from->data[i]);
 }
 
-void 
-free_string_array(string_array *arr)
+void free_string_array(string_array *arr)
 {
     if (arr != NULL)
     {
@@ -60,6 +57,8 @@ create_table_stack_entry(char *table_name, table_stack *next)
 {
     table_stack *new_entry = palloc(sizeof(table_stack));
     new_entry->table_name = pstrdup(table_name);
+    new_entry->first_column = true;
+    initStringInfo(&new_entry->where_condition);
     new_entry->next = next;
     return new_entry;
 }
@@ -80,18 +79,21 @@ pop_table_stack(table_stack **stack)
         *stack = top->next;
         table_name = pstrdup(top->table_name);
         pfree(top->table_name);
+        if (top->where_condition.data)
+            pfree(top->where_condition.data);
         pfree(top);
     }
     return table_name;
 }
 
-void 
-free_table_stack(table_stack **stack)
+void free_table_stack(table_stack **stack)
 {
     while (*stack)
     {
         table_stack *next = (*stack)->next;
         pfree((*stack)->table_name);
+        if ((*stack)->where_condition.data)
+            pfree((*stack)->where_condition.data);
         pfree(*stack);
         *stack = next;
     }
@@ -120,15 +122,13 @@ create_hier_header2(char *hier, int hier_id)
     return hh;
 }
 
-void 
-update_hier_header(hier_header *hh, char *hier, int hier_id)
+void update_hier_header(hier_header *hh, char *hier, int hier_id)
 {
     strcpy(hh->hier, hier);
     hh->hier_id = hier_id;
 }
 
-void 
-free_hier_header(hier_header *hh)
+void free_hier_header(hier_header *hh)
 {
     if (hh)
         free(hh);
