@@ -11,10 +11,6 @@ SRCDIR = src
 PG_CFLAGS = -I ./include -g
 PG_CPPFLAGS = $(PG_CFLAGS)
 
-# Custom test target that calls the test subdirectory
-test: install
-	$(MAKE) -C test installcheck
-
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
