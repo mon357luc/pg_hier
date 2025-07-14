@@ -1,6 +1,3 @@
-ALTER USER postgres
-SET search_path TO public,
-    taxon;
 SELECT pg_hier_create_hier (
         ARRAY [
             'kingdoms',
@@ -30,10 +27,6 @@ SELECT pg_hier_create_hier (
             'genus_id'
         ]
     );
-SELECT *
-FROM pg_hier_header;
-SELECT *
-FROM pg_hier_detail;
 SET search_path TO public,
     taxon;
 SELECT pg_hier_parse (
@@ -49,20 +42,3 @@ SELECT pg_hier_parse (
         species_id },
         order_id } } $$
     );
---order_id = 1
-SET search_path TO public,
-    taxon;
-SELECT pg_hier (
-        $$ orders { scientific_name,
-        common_name,
-        families { scientific_name,
-        common_name,
-        genera { scientific_name,
-        common_name,
-        genus_id },
-        species { scientific_name,
-        common_name,
-        species_id } },
-        order_id } $$
-    );
---order_id = 1

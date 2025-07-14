@@ -38,14 +38,14 @@ Datum pg_hier(PG_FUNCTION_ARGS)
         {
             pfree(input);
             pfree(parse_buf.data);
-            ereport(ERROR, (errmsg("No tables found in input string.")));
+            pg_hier_error_no_tables();
         }
         else
         {
             pfree(input);
             pfree(parse_buf.data);
             free_string_array(tables);
-            ereport(ERROR, (errmsg("At least two tables are needed for hierarchical query.")));
+            pg_hier_error_insufficient_tables();
         }
     }
 
@@ -85,7 +85,7 @@ Datum pg_hier_parse(PG_FUNCTION_ARGS)
     {
         pfree(input);
         pfree(parse_buf.data);
-        ereport(ERROR, (errmsg("No tables found in input string.")));
+        pg_hier_error_no_tables();
     }
     free_string_array(tables);
     pfree(input);
@@ -132,7 +132,7 @@ Datum pg_hier_join(PG_FUNCTION_ARGS)
 
     int ret = SPI_connect();
     if (ret != SPI_OK_CONNECT)
-        elog(ERROR, "SPI_connect failed: %d", ret);
+        pg_hier_error_spi_connect(ret);
 
     const char *fetch_hier =
         "WITH RECURSIVE path AS ( "
@@ -164,13 +164,13 @@ Datum pg_hier_join(PG_FUNCTION_ARGS)
     if (ret != SPI_OK_SELECT)
     {
         SPI_finish();
-        elog(ERROR, "SPI_execute_with_args failed: %d", ret);
+        pg_hier_error_spi_execute_with_args(ret);
     }
 
     if (SPI_processed == 0)
     {
         SPI_finish();
-        elog(ERROR, "No path found from %s to %s", parent_name, child_name);
+        pg_hier_error_no_path_found(parent_name, child_name);
     }
 
     HeapTuple tuple = SPI_tuptable->vals[0];
@@ -188,7 +188,7 @@ Datum pg_hier_join(PG_FUNCTION_ARGS)
     if (name_path_len < 2)
     {
         SPI_finish();
-        elog(ERROR, "No path found from %s to %s", parent_name, child_name);
+        pg_hier_error_no_path_found(parent_name, child_name);
     }
 
     deconstruct_array(name_path_arr, TEXTOID, -1, false, 'i',
@@ -232,7 +232,7 @@ Datum pg_hier_join(PG_FUNCTION_ARGS)
             if (!colon)
             {
                 SPI_finish();
-                elog(ERROR, "Invalid key format: %s", pair);
+                pg_hier_error_invalid_key_format(pair);
             }
             *colon = '\0';
             char *left_key = pair;
@@ -241,8 +241,7 @@ Datum pg_hier_join(PG_FUNCTION_ARGS)
             if (key_idx > 0)
                 appendStringInfoString(&join_sql, " AND ");
 
-            elog(INFO, "Current table check 2: %s",
-                 TextDatumGetCString(name_path_elems[i]));
+            pg_hier_info_table_check(TextDatumGetCString(name_path_elems[i]));
 
             appendStringInfo(&join_sql, "%s.%s = %s.%s",
                              parent_table, left_key,
@@ -278,13 +277,13 @@ Datum pg_hier_format(PG_FUNCTION_ARGS)
 
     int ret = SPI_connect();
     if (ret != SPI_OK_CONNECT)
-        elog(ERROR, "SPI_connect failed: %d", ret);
+        pg_hier_error_spi_connect(ret);
 
     ret = SPI_execute(query, true, 0);
     if (ret != SPI_OK_SELECT)
     {
         SPI_finish();
-        elog(ERROR, "SPI_execute failed: %d", ret);
+        pg_hier_error_spi_execute(ret);
     }
 
     /*

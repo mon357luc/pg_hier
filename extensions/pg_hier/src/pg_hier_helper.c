@@ -7,7 +7,8 @@
  * based on the next token
  * and builds the SQL query
  **************************************/
-void parse_input(StringInfo buf, const char *input, string_array **tables)
+void 
+parse_input(StringInfo buf, const char *input, string_array **tables)
 {
     table_stack *stack = NULL;
     hier_header *hh = NULL;
@@ -32,41 +33,45 @@ void parse_input(StringInfo buf, const char *input, string_array **tables)
         hh = CREATE_HIER_HEADER();
         input_copy = pstrdup(input);
 
-        // get first token (table name) and { or [
+        // get first token (table name) and { or (
         token = GET_TOKEN(input_copy, &saveptr);
         next_token = GET_TOKEN(&saveptr);
 
         if (!token || *token == '\0')
-            elog(ERROR, "Empty input string or no valid table name found.");
+            pg_hier_error_empty_input();
 
         do
         {
-            elog(INFO, "Current token: %16s, Next token: %16s", token, next_token);
             switch (*next_token)
             {
-            case '[': // Begin where clause
+            case '(': // Begin where clause
                 child_table = pstrdup(token);
                 add_string_to_array(*tables, child_table);
                 stack = create_table_stack_entry(child_table, stack);
+
+
+
                 token = next_token;
                 next_token = GET_TOKEN(&saveptr);
                 cur_buf = &stack->where_condition;
-                elog(INFO, "Entering where clause: %s", child_table);
-                while (next_token && strcmp(next_token, "]"))
+
+                pg_hier_where_clause(cur_buf, next_token, &saveptr);
+                
+                // After pg_hier_where_clause, get the closing ')'
+                next_token = GET_TOKEN(&saveptr);
+                if (!next_token || strcmp(next_token, ")") != 0) 
                 {
-                    appendStringInfo(cur_buf, "%s ", next_token);
-                    token = next_token;
-                    next_token = GET_TOKEN(&saveptr);
+                    pg_hier_error_expected_token(")", next_token, "where clause");
                 }
+                
                 cur_buf = buf;
-                elog(INFO, "Leaving where clause: %s", child_table);
                 break;
 
-            case ']': // End where clause
+            case ')': // End where clause
                 break;
 
             case '{': // Begin subquery
-                if (strcmp(token, "]"))
+                if (strcmp(token, ")"))
                 {
                     child_table = pstrdup(token);
                     add_string_to_array(*tables, child_table);
@@ -85,7 +90,7 @@ void parse_input(StringInfo buf, const char *input, string_array **tables)
                 child_table = NULL;
                 break;
 
-            case '}': // End subquery
+            case '}':
                 if (!is_special_char(*token))
                 {
                     if (stack && !stack->first_column)
@@ -95,12 +100,10 @@ void parse_input(StringInfo buf, const char *input, string_array **tables)
                     appendStringInfo(cur_buf, "'%s', %s.%s", token, stack->table_name, token);
                 }
                 if (stack == NULL)
-                    ereport(ERROR, (errmsg("Unmatched closing brace in input")));
+                    pg_hier_error_unmatched_braces();
 
                 if (stack->where_condition.len > 0)
-                {
                     where_clause = pstrdup(stack->where_condition.data);
-                }
                 child_table = pop_table_stack(&stack);
                 parent_table = peek_table_stack(&stack);
 
@@ -136,8 +139,8 @@ void parse_input(StringInfo buf, const char *input, string_array **tables)
                 break;
 
             case ',': // Next column
-            case '(':
-            case ')':
+            case '[':
+            case ']':
             case ';':
             default:
                 if (!stack)
@@ -224,7 +227,7 @@ get_next_token(char **saveptr)
 static inline bool
 is_special_char(char c)
 {
-    return (c == '{' || c == '}' || c == '[' || c == ']' || c == '(' || c == ')' || c == ',' || c == ';');
+    return (c == '{' || c == '}' || c == '[' || c == ']' || c == '(' || c == ')' || c == ',' || c == ';' || c == ':');
 }
 
 /**************************************
@@ -247,7 +250,8 @@ trim_whitespace(char *str)
     return str;
 }
 
-void pg_hier_get_hier(string_array *tables, hier_header *hh)
+void 
+pg_hier_get_hier(string_array *tables, hier_header *hh)
 {
     // Attempts to check 'cache,' if hh is null or
     // newest table isn't in hh, get new hh
@@ -260,7 +264,8 @@ void pg_hier_get_hier(string_array *tables, hier_header *hh)
     hh->deepest_nest = tables->size - 1;
 }
 
-void pg_hier_find_hier(string_array *tables, hier_header *hh)
+void 
+pg_hier_find_hier(string_array *tables, hier_header *hh)
 {
     string_array *ordered_tables = NULL;
     char *hierarchy_string = NULL;
@@ -269,8 +274,7 @@ void pg_hier_find_hier(string_array *tables, hier_header *hh)
     int ret;
 
     if (tables == NULL || tables->size < 2)
-        ereport(ERROR,
-                (errmsg("Name path elements must contain at least two elements")));
+        pg_hier_error_insufficient_path_elements();
 
     initStringInfo(&query);
     appendStringInfo(&query, "SELECT id, table_path FROM pg_hier_header WHERE ");
@@ -283,10 +287,10 @@ void pg_hier_find_hier(string_array *tables, hier_header *hh)
     PG_TRY();
     {
         if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-            elog(ERROR, "SPI_connect failed: %d", ret);
+            pg_hier_error_spi_connect(ret);
 
         if ((ret = SPI_execute(query.data, true, 0)) != SPI_OK_SELECT)
-            elog(ERROR, "SPI_execute failed: %d", ret);
+            pg_hier_error_spi_execute(ret);
 
         if (SPI_processed > 0)
         {
@@ -314,14 +318,254 @@ void pg_hier_find_hier(string_array *tables, hier_header *hh)
     PG_END_TRY();
 }
 
-void pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *child)
+void
+pg_hier_where_clause(StringInfo buf, char *token, char **saveptr)
+{
+    int lvl = 0;
+    char *next_token = NULL;
+    MemoryContext old_context = MemoryContextSwitchTo(TopMemoryContext);
+    
+    PG_TRY();
+    {    
+        if (pg_strcasecmp(token, "where"))
+            pg_hier_error_expected_where(token);
+            
+        next_token = GET_TOKEN(saveptr);
+        if (strcmp(next_token, "{"))
+            pg_hier_error_expected_token("{", next_token, "'where'");
+        
+        lvl++;
+        
+        next_token = GET_TOKEN(saveptr);
+        
+        if (!strcmp(next_token, "_and") || !strcmp(next_token, "and")) 
+        {
+            _and_operator(buf, saveptr, &lvl);
+        }
+        else if (!strcmp(next_token, "_or") || !strcmp(next_token, "or")) 
+        {
+            _or_operator(buf, saveptr, &lvl);
+        }
+        else 
+        {
+            _parse_condition(buf, next_token, saveptr, &lvl);
+        }
+
+        next_token = GET_TOKEN(saveptr);
+        if (strcmp(next_token, "}"))
+            pg_hier_error_expected_token("}", next_token, "where clause");
+        lvl--;
+
+        if (lvl)
+            pg_hier_error_mismatched_braces();
+    }
+    PG_FINALLY();
+    {
+        MemoryContextSwitchTo(old_context);
+    }
+    PG_END_TRY();
+}
+
+static void 
+_and_operator(StringInfo buf, char **saveptr, int *lvl)
+{
+    char *next_token;
+    
+    next_token = GET_TOKEN(saveptr);
+    if (strcmp(next_token, "{"))
+        pg_hier_error_expected_token("{", next_token, "'_and'");
+    
+    (*lvl)++;
+    
+    appendStringInfo(buf, "(");
+    
+    bool first_condition = true;
+    next_token = GET_TOKEN(saveptr);
+    
+    while (next_token && strcmp(next_token, "}")) 
+    {
+        if (!first_condition)
+            appendStringInfo(buf, " AND ");
+        else
+            first_condition = false;
+
+        // Check if it's a nested operator
+        if (!strcmp(next_token, "_and") || !strcmp(next_token, "and"))
+        {
+            _and_operator(buf, saveptr, lvl);
+        }
+        else if (!strcmp(next_token, "_or") || !strcmp(next_token, "or"))
+        {
+            _or_operator(buf, saveptr, lvl);
+        }
+        else
+        {
+            // It's a field name, parse the condition
+            _parse_condition(buf, next_token, saveptr, lvl);
+        }
+        
+        next_token = GET_TOKEN(saveptr);
+    }
+    
+    appendStringInfo(buf, ")");
+    (*lvl)--;
+}
+
+static void 
+_or_operator(StringInfo buf, char **saveptr, int *lvl)
+{
+    char *next_token;
+    
+    next_token = GET_TOKEN(saveptr);
+    if (strcmp(next_token, "{") != 0)
+        pg_hier_error_expected_token("{", next_token, "'_or'");
+
+    (*lvl)++;
+
+    appendStringInfo(buf, "(");
+
+    bool first_condition = true;
+    next_token = GET_TOKEN(saveptr);
+
+    while (next_token && strcmp(next_token, "}") != 0)
+    {
+        if (!first_condition)
+            appendStringInfo(buf, " OR ");
+        else
+            first_condition = false;
+
+        // Check if it's a nested operator
+        if (!strcmp(next_token, "_and") || !strcmp(next_token, "and"))
+        {
+            _and_operator(buf, saveptr, lvl);
+        }
+        else if (!strcmp(next_token, "_or") || !strcmp(next_token, "or"))
+        {
+            _or_operator(buf, saveptr, lvl);
+        }
+        else
+        {
+            // It's a field name, parse the condition
+            _parse_condition(buf, next_token, saveptr, lvl);
+        }
+
+        next_token = GET_TOKEN(saveptr);
+    }
+
+    appendStringInfo(buf, ")");
+    (*lvl)--;
+}
+
+static void
+_parse_condition(StringInfo buf, char *field_name, char **saveptr, int *lvl)
+{
+    char *next_token = GET_TOKEN(saveptr);
+
+    if (!strcmp(next_token, ":"))
+        next_token = GET_TOKEN(saveptr);
+    
+    if (strcmp(next_token, "{"))
+        pg_hier_error_expected_token("{", next_token, field_name);
+    
+    (*lvl)++;
+    
+    char *operator = GET_TOKEN(saveptr);
+    
+    next_token = GET_TOKEN(saveptr);
+    if (!strcmp(next_token, ":"))
+        next_token = GET_TOKEN(saveptr);
+    else
+        pg_hier_error_expected_token(":", next_token, operator);
+
+    if (next_token == NULL)
+        pg_hier_error_unexpected_end(operator);
+    
+    if (!strcmp(operator, "_eq")) 
+    {
+        appendStringInfo(buf, "%s = %s", field_name, next_token);
+    } 
+    else if (!strcmp(operator, "_like")) 
+    {
+        appendStringInfo(buf, "%s LIKE %s", field_name, next_token);
+    }
+    else if (!strcmp(operator, "_gt")) 
+    {
+        appendStringInfo(buf, "%s > %s", field_name, next_token);
+    }
+    else if (!strcmp(operator, "_lt")) 
+    {
+        appendStringInfo(buf, "%s < %s", field_name, next_token);
+    }
+    else if (!strcmp(operator, "_in")) 
+    {
+        appendStringInfo(buf, "%s IN (%s)", field_name, next_token);
+    } 
+    else if (!strcmp(operator, "_not_in")) 
+    {
+        appendStringInfo(buf, "%s NOT IN (%s)", field_name, next_token);
+    } 
+    else if (!strcmp(operator, "_is_null")) 
+    {
+        appendStringInfo(buf, "%s IS NULL", field_name);
+    } 
+    else if (!strcmp(operator, "_is_not_null")) 
+    {
+        appendStringInfo(buf, "%s IS NOT NULL", field_name);
+    }
+    else if (!strcmp(operator, "_between")) 
+    {
+        char *lower_bound = GET_TOKEN(saveptr);
+        char *upper_bound = GET_TOKEN(saveptr);
+        if (lower_bound == NULL || upper_bound == NULL)
+            pg_hier_error_invalid_between_values(lower_bound, upper_bound);
+        appendStringInfo(buf, "%s BETWEEN %s AND %s", field_name, lower_bound, upper_bound);
+    }
+    else if (!strcmp(operator, "_not_between")) 
+    {
+        char *lower_bound = GET_TOKEN(saveptr);
+        char *upper_bound = GET_TOKEN(saveptr);
+        if (lower_bound == NULL || upper_bound == NULL)
+            pg_hier_error_invalid_between_values(lower_bound, upper_bound);
+        appendStringInfo(buf, "%s NOT BETWEEN %s AND %s", field_name, lower_bound, upper_bound);
+    }
+    else if (!strcmp(operator, "_exists")) 
+    {
+        appendStringInfo(buf, "EXISTS (SELECT 1 FROM %s WHERE %s)", next_token, field_name);
+    } 
+    else if (!strcmp(operator, "_not_exists")) 
+    {
+        appendStringInfo(buf, "NOT EXISTS (SELECT 1 FROM %s WHERE %s)", next_token, field_name);
+    } 
+    else if (!strcmp(operator, "_is_true")) 
+    {
+        appendStringInfo(buf, "%s IS TRUE", field_name);
+    } 
+    else if (!strcmp(operator, "_is_false")) 
+    {
+        appendStringInfo(buf, "%s IS FALSE", field_name);
+    }
+    else 
+    {
+        pg_hier_error_unknown_operator(operator);
+    }
+    
+    next_token = GET_TOKEN(saveptr);
+    if (strcmp(next_token, "}"))
+        pg_hier_error_expected_token("}", next_token, "condition");
+
+    (*lvl)--;
+}
+
+void 
+pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *child)
 {
     int ret;
 
-    // Input validation
+    MemoryContext old_context = MemoryContextSwitchTo(TopMemoryContext);
+
     if (!hh || !parent || !child)
     {
-        elog(WARNING, "Missing required parameters for hierarchy lookup");
+        pg_hier_warning_missing_params();
         if (child)
             appendStringInfoString(buf, child);
         return;
@@ -330,7 +574,7 @@ void pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *ch
     PG_TRY();
     {
         if ((ret = SPI_connect()) != SPI_OK_CONNECT)
-            elog(ERROR, "SPI_connect failed: %d", ret);
+            pg_hier_error_spi_connect(ret);
 
         text *parent_text = parent ? cstring_to_text(parent) : NULL;
         text *child_text = child ? cstring_to_text(child) : NULL;
@@ -351,7 +595,7 @@ void pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *ch
             pfree(child_text);
 
         if (ret != SPI_OK_SELECT)
-            elog(ERROR, "SPI_execute failed: %d", ret);
+            pg_hier_error_spi_execute(ret);
 
         if (SPI_processed > 0)
         {
@@ -373,7 +617,7 @@ void pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *ch
 
                 if (isnull_parent || isnull_child || isnull_parent_key || isnull_child_key)
                 {
-                    elog(WARNING, "Row %d has NULL values in critical fields", i);
+                    pg_hier_warning_null_values(i);
                     continue;
                 }
 
@@ -497,33 +741,33 @@ void pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *ch
         else
         {
             appendStringInfoString(buf, child);
-            elog(WARNING, "No hierarchy data found for parent=%s, child=%s", parent, child);
+            pg_hier_error_no_hierarchy_data(parent, child);
         }
     }
     PG_FINALLY();
     {
         SPI_finish();
+        MemoryContextSwitchTo(old_context);
     }
     PG_END_TRY();
-
-    SPI_finish();
 }
 
-Datum pg_hier_return_one(const char *sql)
+Datum 
+pg_hier_return_one(const char *sql)
 {
     int ret;
     Datum result = (Datum)NULL;
     bool is_null;
 
     if ((ret = SPI_connect()) < 0)
-        elog(ERROR, "SPI_connect failed: %s", SPI_result_code_string(ret));
+        pg_hier_error_spi_connect(ret);
 
     ret = SPI_execute(sql, true, 0);
 
     if (ret != SPI_OK_SELECT)
     {
         SPI_finish();
-        elog(ERROR, "SPI_execute failed: %s", SPI_result_code_string(ret));
+        pg_hier_error_spi_execute(ret);
     }
 
     if (SPI_processed > 0 && SPI_tuptable != NULL)
@@ -702,7 +946,8 @@ get_or_create_array(Jsonb *existing_jsonb, char *key_str)
     }
 }
 
-int find_column_index(ColumnArrayState *state, text *column_name)
+int 
+find_column_index(ColumnArrayState *state, text *column_name)
 {
     for (int i = 0; i < state->num_columns; i++)
     {
@@ -717,7 +962,8 @@ int find_column_index(ColumnArrayState *state, text *column_name)
     return -1;
 }
 
-void datum_to_jsonb(Datum val, Oid val_type, JsonbValue *result)
+void 
+datum_to_jsonb(Datum val, Oid val_type, JsonbValue *result)
 {
     switch (val_type)
     {

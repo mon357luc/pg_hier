@@ -4,6 +4,7 @@
 #include "pg_hier_dependencies.h"
 #include "pg_hier_structs.h"
 #include "pg_hier_sql.h"
+#include "pg_hier_errors.h"
 
 void parse_input(StringInfo buf, const char *input, string_array **tables);
 static char *first_token(const char *input, char **saveptr);
@@ -14,6 +15,12 @@ static char *trim_whitespace(char *str);
 void pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *child);
 void pg_hier_get_hier(string_array *tables, hier_header *hh);
 void pg_hier_find_hier(string_array *tables, hier_header *hh);
+
+void pg_hier_where_clause(StringInfo buf, char *next_token, char **saveptr);
+static void _and_operator(StringInfo buf, char **saveptr, int *lvl);
+static void _or_operator(StringInfo buf, char **saveptr, int *lvl);
+static void _parse_condition(StringInfo buf, char *field_name, char **saveptr, int *lvl);
+
 string_array *reorder_tables(string_array *tables, char *hierarchy_string);
 static int compare_string_positions(const void *a, const void *b);
 
