@@ -1,0 +1,53 @@
+-- Test pg_hier extension with taxonomic data
+
+-- Create the extension
+CREATE EXTENSION IF NOT EXISTS pg_hier;
+
+-- Set search path to include taxon schema
+SET search_path TO taxon;
+
+-- Test that taxon data is loaded
+SELECT COUNT(*) as kingdom_count FROM taxon.kingdoms;
+ERROR:  relation "taxon.kingdoms" does not exist
+LINE 1: SELECT COUNT(*) as kingdom_count FROM taxon.kingdoms;
+                                              ^
+SELECT COUNT(*) as species_count FROM taxon.species;
+ERROR:  relation "taxon.species" does not exist
+LINE 1: SELECT COUNT(*) as species_count FROM taxon.species;
+                                              ^
+
+-- Test hierarchical queries on taxonomic data
+SELECT k.scientific_name as kingdom, COUNT(s.species_id) as species_count
+FROM kingdoms k
+LEFT JOIN phyla p ON k.kingdom_id = p.kingdom_id
+LEFT JOIN classes c ON p.phylum_id = c.phylum_id
+LEFT JOIN orders o ON c.class_id = o.class_id
+LEFT JOIN families f ON o.order_id = f.order_id
+LEFT JOIN genera g ON f.family_id = g.family_id
+LEFT JOIN species s ON g.genus_id = s.genus_id
+GROUP BY k.kingdom_id, k.scientific_name
+ORDER BY k.scientific_name;
+ERROR:  relation "kingdoms" does not exist
+LINE 2: FROM kingdoms k
+             ^
+
+-- Test pg_hier_create_hier with taxonomic data (commented out until function is implemented)
+-- SELECT pg_hier_create_hier(
+--     ARRAY['taxon.kingdoms', 'taxon.phyla', 'taxon.classes', 'taxon.orders', 'taxon.families', 'taxon.genera', 'taxon.species'],
+--     ARRAY['kingdom_id', 'phylum_id', 'class_id', 'order_id', 'family_id', 'genus_id', 'species_id'],
+--     ARRAY[NULL, 'kingdom_id', 'phylum_id', 'class_id', 'order_id', 'family_id', 'genus_id']
+-- ) as hierarchy_result;
+
+-- Find all species in a specific family
+SELECT s.scientific_name, s.common_name, g.scientific_name as genus
+FROM species s
+JOIN genera g ON s.genus_id = g.genus_id
+JOIN families f ON g.family_id = f.family_id
+WHERE f.scientific_name = 'Felidae'
+ORDER BY s.scientific_name;
+ERROR:  relation "species" does not exist
+LINE 2: FROM species s
+             ^
+
+-- Clean up
+DROP EXTENSION pg_hier;
