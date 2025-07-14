@@ -1,0 +1,28 @@
+﻿-- Basic test for pg_hier extension
+-- Test extension creation and basic functionality
+-- Create the extension
+CREATE EXTENSION IF NOT EXISTS pg_hier;
+-- Test basic extension installation
+SELECT extname FROM pg_extension WHERE extname = 'pg_hier';
+ extname 
+---------
+ pg_hier
+(1 row)
+
+-- Test that extension is properly loaded
+\dx pg_hier
+                                    List of installed extensions
+  Name   | Version | Schema |                              Description                              
+---------+---------+--------+-----------------------------------------------------------------------
+ pg_hier | 0.1     | public | pg_hier makes it less verbose to query hierarchical structured tables
+(1 row)
+
+-- Test extension version
+SELECT extversion FROM pg_extension WHERE extname = 'pg_hier';
+ extversion 
+------------
+ 0.1
+(1 row)
+
+-- Clean up
+DROP EXTENSION pg_hier;

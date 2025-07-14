@@ -1,4 +1,4 @@
-comment = 'pg_hier makes it less verbose to query hierarchical structured tables'
+﻿comment = 'pg_hier makes it less verbose to query hierarchical structured tables'
 default_version = '0.1'
 module_pathname = '$libdir/pg_hier'
 relocatable = true

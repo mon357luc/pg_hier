@@ -1,0 +1,14 @@
+*.sql text eol=lf
+*.out text eol=lf
+*.diffs text eol=lf
+*.control text eol=lf
+*.md text eol=lf
+
+README* text eol=lf
+CHANGELOG* text eol=lf
+LICENSE* text eol=lf
+Makefile text eol=lf
+
+*.so binary
+*.o binary
+*.bc binary
