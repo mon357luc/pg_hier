@@ -1,4 +1,4 @@
-﻿-- Test for pg_hier extension functions
+-- Test for pg_hier extension functions
 -- Test all public functions and their edge cases
 
 -- Create the extension

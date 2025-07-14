@@ -1,4 +1,4 @@
-﻿-- Basic test for pg_hier extension
+-- Basic test for pg_hier extension
 -- Test extension creation and basic functionality
 
 -- Create the extension

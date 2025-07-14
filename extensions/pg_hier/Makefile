@@ -1,4 +1,4 @@
-﻿EXTENSION = pg_hier
+EXTENSION = pg_hier
 
 MODULE_big = $(EXTENSION)
 

@@ -1,7 +1,7 @@
 *.sql text eol=lf
 *.out text eol=lf
 *.diffs text eol=lf
-*.control text eol=lf
+# *.control text eol=lf  # Commented out - PostgreSQL might be sensitive to .control file format
 *.md text eol=lf
 
 README* text eol=lf
