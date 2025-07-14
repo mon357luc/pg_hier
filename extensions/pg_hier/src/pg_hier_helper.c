@@ -23,9 +23,10 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
     MemoryContext old_context = MemoryContextSwitchTo(TopMemoryContext);
 
     StringInfoData rel_buf;
+    StringInfo cur_buf;
+    
     initStringInfo(&rel_buf);
-
-    StringInfo cur_buf = buf;
+    cur_buf = buf;
 
     PG_TRY();
     {
@@ -174,7 +175,7 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
     PG_END_TRY();
 }
 
-static char *
+char *
 first_token(const char *input, char **saveptr)
 {
     if (!input)
@@ -183,10 +184,15 @@ first_token(const char *input, char **saveptr)
     return get_next_token(saveptr);
 }
 
-static char *
+char *
 get_next_token(char **saveptr)
 {
-    char *s = *saveptr;
+    char *s;
+    char *result;
+    char *start;
+    size_t len;
+    
+    s = *saveptr;
     if (!s)
         return NULL;
 
@@ -204,19 +210,19 @@ get_next_token(char **saveptr)
         char *tok = s;
         s++;
         *saveptr = s;
-        char *result = palloc(2);
+        result = palloc(2);
         result[0] = *tok;
         result[1] = '\0';
         return result;
     }
 
     // Handle regular tokens
-    char *start = s;
+    start = s;
     while (*s && !isspace((unsigned char)*s) && !is_special_char(*s))
         s++;
 
-    size_t len = s - start;
-    char *result = palloc(len + 1);
+    len = s - start;
+    result = palloc(len + 1);
     strncpy(result, start, len);
     result[len] = '\0';
     *saveptr = s;
@@ -224,7 +230,7 @@ get_next_token(char **saveptr)
     return result;
 }
 
-static inline bool
+bool
 is_special_char(char c)
 {
     return (c == '{' || c == '}' || c == '[' || c == ']' || c == '(' || c == ')' || c == ',' || c == ';' || c == ':');
@@ -234,16 +240,18 @@ is_special_char(char c)
  * Helper function to trim
  * whitespace from a string
  **************************************/
-static char *
+char *
 trim_whitespace(char *str)
 {
+    char *end;
+    
     if (str == NULL)
         return NULL;
     while (isspace((unsigned char)*str))
         str++;
     if (*str == 0)
         return str;
-    char *end = str + strlen(str) - 1;
+    end = str + strlen(str) - 1;
     while (end > str && isspace((unsigned char)*end))
         end--;
     end[1] = '\0';
@@ -267,7 +275,6 @@ pg_hier_get_hier(string_array *tables, hier_header *hh)
 void 
 pg_hier_find_hier(string_array *tables, hier_header *hh)
 {
-    string_array *ordered_tables = NULL;
     char *hierarchy_string = NULL;
     StringInfoData query;
     uint64 hier_id = 0;
@@ -366,10 +373,11 @@ pg_hier_where_clause(StringInfo buf, char *token, char **saveptr)
     PG_END_TRY();
 }
 
-static void 
+void 
 _and_operator(StringInfo buf, char **saveptr, int *lvl)
 {
     char *next_token;
+    bool first_condition;
     
     next_token = GET_TOKEN(saveptr);
     if (strcmp(next_token, "{"))
@@ -379,7 +387,7 @@ _and_operator(StringInfo buf, char **saveptr, int *lvl)
     
     appendStringInfo(buf, "(");
     
-    bool first_condition = true;
+    first_condition = true;
     next_token = GET_TOKEN(saveptr);
     
     while (next_token && strcmp(next_token, "}")) 
@@ -411,10 +419,11 @@ _and_operator(StringInfo buf, char **saveptr, int *lvl)
     (*lvl)--;
 }
 
-static void 
+void 
 _or_operator(StringInfo buf, char **saveptr, int *lvl)
 {
     char *next_token;
+    bool first_condition;
     
     next_token = GET_TOKEN(saveptr);
     if (strcmp(next_token, "{") != 0)
@@ -424,7 +433,7 @@ _or_operator(StringInfo buf, char **saveptr, int *lvl)
 
     appendStringInfo(buf, "(");
 
-    bool first_condition = true;
+    first_condition = true;
     next_token = GET_TOKEN(saveptr);
 
     while (next_token && strcmp(next_token, "}") != 0)
@@ -456,10 +465,13 @@ _or_operator(StringInfo buf, char **saveptr, int *lvl)
     (*lvl)--;
 }
 
-static void
+void
 _parse_condition(StringInfo buf, char *field_name, char **saveptr, int *lvl)
 {
-    char *next_token = GET_TOKEN(saveptr);
+    char *next_token;
+    char *operator;
+    
+    next_token = GET_TOKEN(saveptr);
 
     if (!strcmp(next_token, ":"))
         next_token = GET_TOKEN(saveptr);
@@ -469,7 +481,7 @@ _parse_condition(StringInfo buf, char *field_name, char **saveptr, int *lvl)
     
     (*lvl)++;
     
-    char *operator = GET_TOKEN(saveptr);
+    operator = GET_TOKEN(saveptr);
     
     next_token = GET_TOKEN(saveptr);
     if (!strcmp(next_token, ":"))
@@ -573,17 +585,24 @@ pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *child)
 
     PG_TRY();
     {
+        text *parent_text;
+        text *child_text;
+        Oid argtypes[3];
+        Datum values[3];
+        int last_idx;
+        
         if ((ret = SPI_connect()) != SPI_OK_CONNECT)
             pg_hier_error_spi_connect(ret);
 
-        text *parent_text = parent ? cstring_to_text(parent) : NULL;
-        text *child_text = child ? cstring_to_text(child) : NULL;
+        parent_text = parent ? cstring_to_text(parent) : NULL;
+        child_text = child ? cstring_to_text(child) : NULL;
 
-        Oid argtypes[3] = {INT4OID, TEXTOID, TEXTOID};
-        Datum values[3] = {
-            Int32GetDatum(hh->hier_id),
-            PointerGetDatum(parent_text),
-            PointerGetDatum(child_text)};
+        argtypes[0] = INT4OID;
+        argtypes[1] = TEXTOID;
+        argtypes[2] = TEXTOID;
+        values[0] = Int32GetDatum(hh->hier_id);
+        values[1] = PointerGetDatum(parent_text);
+        values[2] = PointerGetDatum(child_text);
 
         ret = SPI_execute_with_args(
             PG_HIER_SQL_GET_HIER_BY_ID,
@@ -599,21 +618,32 @@ pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *child)
 
         if (SPI_processed > 0)
         {
-            bool first_join = true;
-            HeapTuple last_tuple = NULL;
-            int last_idx = SPI_processed - 1;
+            last_idx = SPI_processed - 1;
 
             appendStringInfoString(buf, child);
 
             for (int i = 0; i < last_idx; i++)
             {
-                HeapTuple tuple = SPI_tuptable->vals[i];
+                HeapTuple tuple;
                 bool isnull_parent, isnull_child, isnull_parent_key, isnull_child_key;
+                Datum parent_name_datum, parent_key_datum, child_name_datum, child_key_datum;
+                char *parent_name;
+                char *child_name;
+                ArrayType *parent_key_array, *child_key_array;
+                Datum *parent_key_elems, *child_key_elems;
+                bool *parent_key_nulls, *child_key_nulls;
+                int parent_key_nelems, child_key_nelems;
+                int16 typlen;
+                bool typbyval;
+                char typalign;
+                char *parent_key;
 
-                Datum parent_name_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull_parent);
-                Datum parent_key_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 2, &isnull_parent_key);
-                Datum child_name_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 3, &isnull_child);
-                Datum child_key_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 4, &isnull_child_key);
+                tuple = SPI_tuptable->vals[i];
+
+                parent_name_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull_parent);
+                parent_key_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 2, &isnull_parent_key);
+                child_name_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 3, &isnull_child);
+                child_key_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 4, &isnull_child_key);
 
                 if (isnull_parent || isnull_child || isnull_parent_key || isnull_child_key)
                 {
@@ -621,20 +651,12 @@ pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *child)
                     continue;
                 }
 
-                char *parent_name = TextDatumGetCString(parent_name_datum);
-                char *child_name = TextDatumGetCString(child_name_datum);
+                parent_name = TextDatumGetCString(parent_name_datum);
+                child_name = TextDatumGetCString(child_name_datum);
 
                 // Process array keys
-                ArrayType *parent_key_array = DatumGetArrayTypeP(parent_key_datum);
-                ArrayType *child_key_array = DatumGetArrayTypeP(child_key_datum);
-
-                Datum *parent_key_elems, *child_key_elems;
-                bool *parent_key_nulls, *child_key_nulls;
-                int parent_key_nelems, child_key_nelems;
-
-                int16 typlen;
-                bool typbyval;
-                char typalign;
+                parent_key_array = DatumGetArrayTypeP(parent_key_datum);
+                child_key_array = DatumGetArrayTypeP(child_key_datum);
 
                 get_typlenbyvalalign(ARR_ELEMTYPE(parent_key_array), &typlen, &typbyval, &typalign);
                 deconstruct_array(parent_key_array, ARR_ELEMTYPE(parent_key_array),
@@ -650,11 +672,13 @@ pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *child)
 
                 for (int j = 0; j < parent_key_nelems && j < child_key_nelems; j++)
                 {
+                    char *child_key;
+                    
                     if (j > 0)
                         appendStringInfoString(buf, " AND ");
 
-                    char *parent_key = TextDatumGetCString(parent_key_elems[j]);
-                    char *child_key = TextDatumGetCString(child_key_elems[j]);
+                    parent_key = TextDatumGetCString(parent_key_elems[j]);
+                    child_key = TextDatumGetCString(child_key_elems[j]);
 
                     appendStringInfo(buf, "%s.%s = %s.%s",
                                      child_name, child_key,
@@ -676,29 +700,35 @@ pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *child)
 
             if (SPI_processed > 0)
             {
-                HeapTuple tuple = SPI_tuptable->vals[last_idx];
+                HeapTuple tuple;
                 bool isnull_parent, isnull_child, isnull_parent_key, isnull_child_key;
+                Datum parent_name_datum, parent_key_datum, child_name_datum, child_key_datum;
+                char *parent_name;
+                char *child_name;
+                ArrayType *parent_key_array, *child_key_array;
+                Datum *parent_key_elems, *child_key_elems;
+                bool *parent_key_nulls, *child_key_nulls;
+                int parent_key_nelems, child_key_nelems;
+                int16 typlen;
+                bool typbyval;
+                char typalign;
+                char *parent_key;
+                
+                tuple = SPI_tuptable->vals[last_idx];
 
-                Datum parent_name_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull_parent);
-                Datum parent_key_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 2, &isnull_parent_key);
-                Datum child_name_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 3, &isnull_child);
-                Datum child_key_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 4, &isnull_child_key);
+                parent_name_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull_parent);
+                parent_key_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 2, &isnull_parent_key);
+                child_name_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 3, &isnull_child);
+                child_key_datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 4, &isnull_child_key);
 
                 if (!isnull_parent && !isnull_child && !isnull_parent_key && !isnull_child_key)
                 {
-                    char *parent_name = TextDatumGetCString(parent_name_datum);
-                    char *child_name = TextDatumGetCString(child_name_datum);
+                    parent_name = TextDatumGetCString(parent_name_datum);
+                    child_name = TextDatumGetCString(child_name_datum);
 
-                    ArrayType *parent_key_array = DatumGetArrayTypeP(parent_key_datum);
-                    ArrayType *child_key_array = DatumGetArrayTypeP(child_key_datum);
-
-                    Datum *parent_key_elems, *child_key_elems;
-                    bool *parent_key_nulls, *child_key_nulls;
-                    int parent_key_nelems, child_key_nelems;
-
-                    int16 typlen;
-                    bool typbyval;
-                    char typalign;
+                    // Process array keys
+                    parent_key_array = DatumGetArrayTypeP(parent_key_datum);
+                    child_key_array = DatumGetArrayTypeP(child_key_datum);
 
                     get_typlenbyvalalign(ARR_ELEMTYPE(parent_key_array), &typlen, &typbyval, &typalign);
                     deconstruct_array(parent_key_array, ARR_ELEMTYPE(parent_key_array),
@@ -714,11 +744,13 @@ pg_hier_from_clause(StringInfo buf, hier_header *hh, char *parent, char *child)
 
                     for (int j = 0; j < parent_key_nelems && j < child_key_nelems; j++)
                     {
+                        char *child_key;
+                        
                         if (j > 0)
                             appendStringInfoString(buf, " AND ");
 
-                        char *parent_key = TextDatumGetCString(parent_key_elems[j]);
-                        char *child_key = TextDatumGetCString(child_key_elems[j]);
+                        parent_key = TextDatumGetCString(parent_key_elems[j]);
+                        child_key = TextDatumGetCString(child_key_elems[j]);
 
                         appendStringInfo(buf, "%s.%s = %s.%s",
                                          child_name, child_key,
@@ -757,7 +789,6 @@ pg_hier_return_one(const char *sql)
 {
     int ret;
     Datum result = (Datum)NULL;
-    bool is_null;
 
     if ((ret = SPI_connect()) < 0)
         pg_hier_error_spi_connect(ret);
@@ -801,9 +832,12 @@ reorder_tables(string_array *tables, char *hierarchy_string)
 
     for (int i = 0; i < tables->size; i++)
     {
+        char *table;
+        char *pos;
+        
         positions[i].original_position = i;
-        char *table = tables->data[i];
-        char *pos = strstr(hierarchy_string, table);
+        table = tables->data[i];
+        pos = strstr(hierarchy_string, table);
         if (pos)
             positions[i].hierarchy_position = pos - hierarchy_string;
         else
@@ -821,7 +855,7 @@ reorder_tables(string_array *tables, char *hierarchy_string)
     return result;
 }
 
-static int
+int
 compare_string_positions(const void *a, const void *b)
 {
     struct table_position *posA = (struct table_position *)a;
@@ -1022,14 +1056,18 @@ datum_to_jsonb(Datum val, Oid val_type, JsonbValue *result)
     case JSONOID:
     {
         Jsonb *jb;
+        JsonbContainer *container;
+        JsonbValue scalar_value;
+        JsonbIterator *it;
+        JsonbIteratorToken tok;
+        
         jb = DatumGetJsonbP(DirectFunctionCall1(to_jsonb, val));
 
-        JsonbContainer *container = &jb->root;
+        container = &jb->root;
         if (JB_ROOT_IS_SCALAR(container))
         {
-            JsonbValue scalar_value;
-            JsonbIterator *it = JsonbIteratorInit(container);
-            JsonbIteratorToken tok = JsonbIteratorNext(&it, &scalar_value, true);
+            it = JsonbIteratorInit(container);
+            tok = JsonbIteratorNext(&it, &scalar_value, true);
 
             if (tok == WJB_VALUE)
             {
@@ -1045,7 +1083,7 @@ datum_to_jsonb(Datum val, Oid val_type, JsonbValue *result)
         else
         {
             result->type = jbvBinary;
-            result->val.binary.data = jb;
+            result->val.binary.data = &jb->root;
             result->val.binary.len = VARSIZE(jb);
         }
         break;
@@ -1053,14 +1091,19 @@ datum_to_jsonb(Datum val, Oid val_type, JsonbValue *result)
 
     case JSONBOID:
     {
-        Jsonb *jb = DatumGetJsonbP(val);
-        JsonbContainer *container = &jb->root;
+        Jsonb *jb;
+        JsonbContainer *container;
+        JsonbValue scalar_value;
+        JsonbIterator *it;
+        JsonbIteratorToken tok;
+        
+        jb = DatumGetJsonbP(val);
+        container = &jb->root;
 
         if (JB_ROOT_IS_SCALAR(container))
         {
-            JsonbValue scalar_value;
-            JsonbIterator *it = JsonbIteratorInit(container);
-            JsonbIteratorToken tok = JsonbIteratorNext(&it, &scalar_value, true);
+            it = JsonbIteratorInit(container);
+            tok = JsonbIteratorNext(&it, &scalar_value, true);
 
             if (tok == WJB_VALUE)
             {
@@ -1076,7 +1119,7 @@ datum_to_jsonb(Datum val, Oid val_type, JsonbValue *result)
         else
         {
             result->type = jbvBinary;
-            result->val.binary.data = jb;
+            result->val.binary.data = &jb->root;
             result->val.binary.len = VARSIZE(jb);
         }
         break;

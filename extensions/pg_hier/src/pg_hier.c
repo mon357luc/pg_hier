@@ -19,15 +19,18 @@ PG_FUNCTION_INFO_V1(pg_hier);
  ****************************/
 Datum pg_hier(PG_FUNCTION_ARGS)
 {
+    text *input_text;
+    char *input;
+    StringInfoData parse_buf;
+    string_array *tables = NULL;
+    Datum result = (Datum)NULL;
+
     if (PG_ARGISNULL(0))
         PG_RETURN_NULL();
 
-    text *input_text = PG_GETARG_TEXT_PP(0);
-    char *input = text_to_cstring(input_text);
-    StringInfoData parse_buf;
+    input_text = PG_GETARG_TEXT_PP(0);
+    input = text_to_cstring(input_text);
     initStringInfo(&parse_buf);
-    string_array *tables = NULL;
-    Datum result = (Datum)NULL;
 
     appendStringInfoString(&parse_buf, "SELECT jsonb_agg(jsonb_build_object(");
     parse_input(&parse_buf, input, &tables);
@@ -68,15 +71,17 @@ PG_FUNCTION_INFO_V1(pg_hier_parse);
  **************************************/
 Datum pg_hier_parse(PG_FUNCTION_ARGS)
 {
+    text *input_text;
+    char *input;
+    StringInfoData parse_buf;
+    string_array *tables = NULL;
+
     if (PG_ARGISNULL(0))
         PG_RETURN_NULL();
 
-    text *input_text = PG_GETARG_TEXT_PP(0);
-    char *input = text_to_cstring(input_text);
-    StringInfoData parse_buf;
+    input_text = PG_GETARG_TEXT_PP(0);
+    input = text_to_cstring(input_text);
     initStringInfo(&parse_buf);
-
-    string_array *tables = NULL;
 
     appendStringInfoString(&parse_buf, "SELECT jsonb_agg(jsonb_build_object(");
     parse_input(&parse_buf, input, &tables);
@@ -103,38 +108,52 @@ PG_FUNCTION_INFO_V1(pg_hier_join);
 Datum pg_hier_join(PG_FUNCTION_ARGS)
 {
     bool isnull;
-
-    text *parent_name_text = PG_GETARG_TEXT_PP(0);
-    text *child_name_text = PG_GETARG_TEXT_PP(1);
-
-    char *parent_name = text_to_cstring(parent_name_text);
-    char *child_name = text_to_cstring(child_name_text);
-
+    text *parent_name_text;
+    text *child_name_text;
+    char *parent_name;
+    char *child_name;
     Datum *name_path_elems;
     bool *name_path_nulls;
     int name_path_count;
-
     Datum *key_path_elems;
     bool *key_path_nulls;
     int key_path_count;
-
     char *parent_table = NULL;
     char *join_table = NULL;
     char *key_json = NULL;
     char *key_array = NULL;
     char *end_array = NULL;
     int key_idx;
-
     char *saveptr = NULL;
-
     StringInfoData join_sql;
+    int ret;
+    const char *fetch_hier;
+    HeapTuple tuple;
+    TupleDesc tupdesc;
+    char *right_key;
+    char *pair;
+    char *end_quote;
+    char *colon;
+    char *left_key;
+    Datum name_path_datum, key_path_datum;
+    ArrayType *name_path_arr, *key_path_arr;
+    int name_path_len;
+    Oid argtypes[2];
+    Datum values[2];
+
+    parent_name_text = PG_GETARG_TEXT_PP(0);
+    child_name_text = PG_GETARG_TEXT_PP(1);
+
+    parent_name = text_to_cstring(parent_name_text);
+    child_name = text_to_cstring(child_name_text);
+
     initStringInfo(&join_sql);
 
-    int ret = SPI_connect();
+    ret = SPI_connect();
     if (ret != SPI_OK_CONNECT)
         pg_hier_error_spi_connect(ret);
 
-    const char *fetch_hier =
+    fetch_hier =
         "WITH RECURSIVE path AS ( "
         "    SELECT "
         "        id, name, parent_id, child_id, parent_key, child_key, "
@@ -158,8 +177,10 @@ Datum pg_hier_join(PG_FUNCTION_ARGS)
         "FROM path "
         "WHERE name = $2;";
 
-    Oid argtypes[2] = {TEXTOID, TEXTOID};
-    Datum values[2] = {PointerGetDatum(parent_name_text), PointerGetDatum(child_name_text)};
+    argtypes[0] = TEXTOID;
+    argtypes[1] = TEXTOID;
+    values[0] = PointerGetDatum(parent_name_text);
+    values[1] = PointerGetDatum(child_name_text);
     ret = SPI_execute_with_args(fetch_hier, 2, argtypes, values, NULL, true, 0);
     if (ret != SPI_OK_SELECT)
     {
@@ -173,17 +194,16 @@ Datum pg_hier_join(PG_FUNCTION_ARGS)
         pg_hier_error_no_path_found(parent_name, child_name);
     }
 
-    HeapTuple tuple = SPI_tuptable->vals[0];
-    TupleDesc tupdesc = SPI_tuptable->tupdesc;
+    tuple = SPI_tuptable->vals[0];
+    tupdesc = SPI_tuptable->tupdesc;
 
-    Datum name_path_datum = SPI_getbinval(tuple, tupdesc, 1, &isnull);
-    Datum key_path_datum = SPI_getbinval(tuple, tupdesc, 2, &isnull);
+    name_path_datum = SPI_getbinval(tuple, tupdesc, 1, &isnull);
+    key_path_datum = SPI_getbinval(tuple, tupdesc, 2, &isnull);
 
-    ArrayType *name_path_arr = DatumGetArrayTypeP(name_path_datum);
-    ArrayType *key_path_arr = DatumGetArrayTypeP(key_path_datum);
+    name_path_arr = DatumGetArrayTypeP(name_path_datum);
+    key_path_arr = DatumGetArrayTypeP(key_path_datum);
 
-    int name_path_len = ArrayGetNItems(ARR_NDIM(name_path_arr), ARR_DIMS(name_path_arr));
-    int key_path_len = ArrayGetNItems(ARR_NDIM(key_path_arr), ARR_DIMS(key_path_arr));
+    name_path_len = ArrayGetNItems(ARR_NDIM(name_path_arr), ARR_DIMS(name_path_arr));
 
     if (name_path_len < 2)
     {
@@ -216,7 +236,7 @@ Datum pg_hier_join(PG_FUNCTION_ARGS)
             end_array--;
         }
 
-        char *pair = strtok_r(key_array, ",", &saveptr);
+        pair = strtok_r(key_array, ",", &saveptr);
         appendStringInfo(&join_sql, " JOIN %s ON ", join_table);
         key_idx = 0;
         while (pair)
@@ -224,19 +244,19 @@ Datum pg_hier_join(PG_FUNCTION_ARGS)
             while (*pair && (*pair == '"' || *pair == ' '))
                 pair++;
 
-            char *end_quote = strchr(pair, '"');
+            end_quote = strchr(pair, '"');
             if (end_quote)
                 *end_quote = '\0';
 
-            char *colon = strchr(pair, ':');
+            colon = strchr(pair, ':');
             if (!colon)
             {
                 SPI_finish();
                 pg_hier_error_invalid_key_format(pair);
             }
             *colon = '\0';
-            char *left_key = pair;
-            char *right_key = colon + 1;
+            left_key = pair;
+            right_key = colon + 1;
 
             if (key_idx > 0)
                 appendStringInfoString(&join_sql, " AND ");
@@ -265,17 +285,23 @@ PG_FUNCTION_INFO_V1(pg_hier_format);
  **************************************/
 Datum pg_hier_format(PG_FUNCTION_ARGS)
 {
+    text *sql;
+    char *query;
+    StringInfoData buf;
+    int ret;
+    bool format_isnull;
+    char *outstr;
+
     if (PG_ARGISNULL(0))
         PG_RETURN_NULL();
 
-    text *sql = PG_GETARG_TEXT_PP(0);
-    char *query = text_to_cstring(sql);
+    sql = PG_GETARG_TEXT_PP(0);
+    query = text_to_cstring(sql);
 
-    StringInfoData buf;
     initStringInfo(&buf);
     appendStringInfoChar(&buf, '{');
 
-    int ret = SPI_connect();
+    ret = SPI_connect();
     if (ret != SPI_OK_CONNECT)
         pg_hier_error_spi_connect(ret);
 
@@ -312,27 +338,29 @@ Datum pg_hier_format(PG_FUNCTION_ARGS)
 
         for (int col = 0; col < SPI_tuptable->tupdesc->natts; col++)
         {
+            Datum val;
+            const char *colname;
+            Oid typid, outFuncOid;
+            bool isVarLen;
+            
             if (col > 0)
                 appendStringInfoString(&buf, ", ");
 
-            bool isnull;
-            Datum val = SPI_getbinval(SPI_tuptable->vals[rowno],
-                                      SPI_tuptable->tupdesc, col + 1, &isnull);
+            val = SPI_getbinval(SPI_tuptable->vals[rowno],
+                                      SPI_tuptable->tupdesc, col + 1, &format_isnull);
 
-            const char *colname = SPI_tuptable->tupdesc->attrs[col].attname.data;
+            colname = SPI_tuptable->tupdesc->attrs[col].attname.data;
 
-            if (isnull)
+            if (format_isnull)
             {
                 appendStringInfo(&buf, "\"%s\": NULL", colname);
             }
             else
             {
-                Oid typid = SPI_gettypeid(SPI_tuptable->tupdesc, col + 1);
-                Oid outFuncOid;
-                bool isVarlen;
-                getTypeOutputInfo(typid, &outFuncOid, &isVarlen);
+                typid = SPI_gettypeid(SPI_tuptable->tupdesc, col + 1);
+                getTypeOutputInfo(typid, &outFuncOid, &isVarLen);
 
-                char *outstr = OidOutputFunctionCall(outFuncOid, val);
+                outstr = OidOutputFunctionCall(outFuncOid, val);
                 appendStringInfo(&buf, "\"%s\": \"%s\"", colname, outstr);
             }
         }

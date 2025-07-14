@@ -198,3 +198,49 @@ BEGIN
     ];
 END;
 $$ LANGUAGE plpgsql IMMUTABLE STRICT;
+
+/**************************************
+ * Extension startup validation
+ **************************************/
+DO $$
+DECLARE
+    test_passed BOOLEAN := TRUE;
+    test_result TEXT;
+BEGIN
+    RAISE NOTICE '';
+    RAISE NOTICE '=================================================';
+    RAISE NOTICE '    pg_hier Extension Installation Complete     ';
+    RAISE NOTICE '=================================================';
+    RAISE NOTICE '';
+
+    -- Quick validation test
+    BEGIN
+        SELECT COUNT(*) INTO test_result 
+        FROM information_schema.routines 
+        WHERE routine_name IN ('pg_hier', 'pg_hier_parse', 'pg_hier_join', 'pg_hier_format');
+        
+        IF test_result::INTEGER = 4 THEN
+            RAISE NOTICE '✓ All functions installed successfully';
+        ELSE
+            RAISE NOTICE '✗ Warning: Some functions may not be installed (found %/4)', test_result;
+        END IF;
+    EXCEPTION
+        WHEN OTHERS THEN
+            RAISE NOTICE '✗ Error during validation: %', SQLERRM;
+    END;
+
+    RAISE NOTICE '';
+    RAISE NOTICE 'Usage examples:';
+    RAISE NOTICE '  SELECT pg_hier(''table1 { col1, table2 { col2 } }'');';
+    RAISE NOTICE '  SELECT pg_hier_parse(''table1 { col1, col2 }'');';
+    RAISE NOTICE '  SELECT pg_hier_join(''parent_table'', ''child_table'');';
+    RAISE NOTICE '';
+    RAISE NOTICE 'To run tests:';
+    RAISE NOTICE '  \\i test/startup_tests.sql  -- Quick validation';
+    RAISE NOTICE '  \\i test/unit_tests.sql     -- Unit tests';
+    RAISE NOTICE '  \\i test/test_pg_hier.sql   -- Full test suite';
+    RAISE NOTICE '';
+    RAISE NOTICE 'Extension ready for use!';
+    RAISE NOTICE '=================================================';
+    RAISE NOTICE '';
+END $$;
