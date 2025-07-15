@@ -69,24 +69,21 @@ peek_table_stack(table_stack **stack)
     return (stack && *stack) ? pstrdup((*stack)->table_name) : NULL;
 }
 
-char *
+table_stack *
 pop_table_stack(table_stack **stack)
 {
-    char *table_name = NULL;
+    table_stack *top = NULL;
     if (stack && *stack)
     {
-        table_stack *top = *stack;
+        top = *stack;
         *stack = top->next;
-        table_name = pstrdup(top->table_name);
-        pfree(top->table_name);
-        if (top->where_condition.data)
-            pfree(top->where_condition.data);
-        pfree(top);
+        top->next = NULL;
     }
-    return table_name;
+    return top;
 }
 
-void free_table_stack(table_stack **stack)
+void 
+free_table_stack(table_stack **stack)
 {
     while (*stack)
     {

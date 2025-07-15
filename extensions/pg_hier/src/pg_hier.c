@@ -30,26 +30,20 @@ Datum pg_hier(PG_FUNCTION_ARGS)
 
     input_text = PG_GETARG_TEXT_PP(0);
     input = text_to_cstring(input_text);
+    input = trim_whitespace(input);
+
+    if (strlen(input) == 0)
+        PG_RETURN_NULL();
+
     initStringInfo(&parse_buf);
 
     appendStringInfoString(&parse_buf, "SELECT jsonb_agg(jsonb_build_object(");
     parse_input(&parse_buf, input, &tables);
 
-    if (tables == NULL || tables->size < 2)
+    if (tables == NULL)
     {
-        if (tables == NULL)
-        {
-            pfree(input);
-            pfree(parse_buf.data);
-            pg_hier_error_no_tables();
-        }
-        else
-        {
-            pfree(input);
-            pfree(parse_buf.data);
-            free_string_array(tables);
-            pg_hier_error_insufficient_tables();
-        }
+        free_string_array(tables);
+        pg_hier_error_no_tables();
     }
 
     free_string_array(tables);
@@ -81,6 +75,11 @@ Datum pg_hier_parse(PG_FUNCTION_ARGS)
 
     input_text = PG_GETARG_TEXT_PP(0);
     input = text_to_cstring(input_text);
+    input = trim_whitespace(input);
+    
+    if (strlen(input) == 0)
+        PG_RETURN_NULL();
+
     initStringInfo(&parse_buf);
 
     appendStringInfoString(&parse_buf, "SELECT jsonb_agg(jsonb_build_object(");

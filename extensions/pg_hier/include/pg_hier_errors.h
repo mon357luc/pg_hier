@@ -68,6 +68,11 @@
     PG_HIER_ERROR(ERRCODE_PG_HIER_SYNTAX_ERROR, \
         "Expected 'where' but got '%s'", got)
 
+#define pg_hier_error_invalid_condition_value(value, operator) \
+    PG_HIER_ERROR(ERRCODE_PG_HIER_INVALID_CONDITION, \
+        "Invalid condition value '%s' for operator '%s'", \
+        value ? value : "NULL", operator)
+
 #define pg_hier_error_unmatched_braces() \
     PG_HIER_ERROR(ERRCODE_PG_HIER_SYNTAX_ERROR, \
         "Unmatched closing brace in input")
@@ -75,6 +80,10 @@
 #define pg_hier_error_mismatched_braces() \
     PG_HIER_ERROR(ERRCODE_PG_HIER_SYNTAX_ERROR, \
         "Mismatched braces in where clause")
+
+#define pg_hier_error_empty_col_list() \
+    PG_HIER_ERROR(ERRCODE_PG_HIER_SYNTAX_ERROR, \
+        "Empty column list in query")
 
 #define pg_hier_error_unexpected_end(after) \
     PG_HIER_ERROR(ERRCODE_PG_HIER_SYNTAX_ERROR, \

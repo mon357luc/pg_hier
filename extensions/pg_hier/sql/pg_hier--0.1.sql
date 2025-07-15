@@ -65,7 +65,7 @@ CREATE OR REPLACE FUNCTION pg_hier_create_hier(
     parent_path_keys text[],
     child_path_keys text[]
 )
-RETURNS VOID AS
+RETURNS TEXT AS
 $$
 DECLARE
     i INT;
@@ -94,8 +94,7 @@ BEGIN
         table_path_string := array_to_string(path_names, '.');
 
         IF EXISTS (SELECT 1 FROM pg_hier_header WHERE table_path = table_path_string) THEN
-            RAISE NOTICE 'Hierarchy % already exists. Skipping creation.', table_path_string;
-            RETURN;
+            RETURN (SELECT table_path FROM pg_hier_header WHERE table_path = table_path_string);
         END IF;
 
         INSERT INTO pg_hier_header (id, table_path)
@@ -111,8 +110,6 @@ BEGIN
                 CASE WHEN i = 1 THEN '{}'::text[] ELSE string_to_array(child_path_keys[i], ':') END 
             );
         END LOOP;
-
-        RAISE NOTICE 'Hierarchy % created with ID %', table_path_string, hier_id;
 
         FOR i IN 1 .. array_length(path_names, 1) LOOP
             SELECT id INTO curr_id FROM pg_hier_detail WHERE hierarchy_id = hier_id AND name = path_names[i];
@@ -141,6 +138,7 @@ BEGIN
                 UPDATE pg_hier_detail SET child_id = v_child_id WHERE id = curr_id;
             END IF;
         END LOOP;
+        RETURN table_path_string;
 
     EXCEPTION
         WHEN OTHERS THEN

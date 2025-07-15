@@ -11,10 +11,11 @@ void
 parse_input(StringInfo buf, const char *input, string_array **tables)
 {
     table_stack *stack = NULL;
+    table_stack *child_node = NULL;
     hier_header *hh = NULL;
-    char *where_clause = NULL;
     char *parent_table = NULL;
     char *child_table = NULL;
+    char *where_clause = NULL;
     char *input_copy = NULL;
     char *token = NULL;
     char *next_token = NULL;
@@ -34,12 +35,15 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
         hh = CREATE_HIER_HEADER();
         input_copy = pstrdup(input);
 
-        // get first token (table name) and { or (
         token = GET_TOKEN(input_copy, &saveptr);
         next_token = GET_TOKEN(&saveptr);
 
-        if (!token || *token == '\0')
-            pg_hier_error_empty_input();
+        if (!token)
+            return;
+        else if (!next_token)
+            pg_hier_error_unexpected_end(token);
+        else if (!strcmp(token, "{"))
+            pg_hier_error_expected_token("[table name]", token, "input");
 
         do
         {
@@ -99,19 +103,26 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
                     else
                         stack->first_column = false;
                     appendStringInfo(cur_buf, "'%s', %s.%s", token, stack->table_name, token);
+                } 
+                else if (!strcmp(token, "{"))
+                {
+                    pg_hier_error_empty_col_list();
                 }
-                if (stack == NULL)
+
+                if (!stack)
                     pg_hier_error_unmatched_braces();
 
-                if (stack->where_condition.len > 0)
-                    where_clause = pstrdup(stack->where_condition.data);
-                child_table = pop_table_stack(&stack);
+                child_node = pop_table_stack(&stack);
                 parent_table = peek_table_stack(&stack);
+
+                if (child_node->where_condition.len > 0)
+                    where_clause = pstrdup(child_node->where_condition.data);
+                
 
                 if (parent_table)
                 {
                     pg_hier_get_hier(*tables, hh);
-                    pg_hier_from_clause(&rel_buf, hh, parent_table, child_table);
+                    pg_hier_from_clause(&rel_buf, hh, parent_table, child_node->table_name);
                     appendStringInfo(cur_buf, ")) FROM %s", rel_buf.data);
                     resetStringInfo(&rel_buf);
 
@@ -127,7 +138,7 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
                 }
                 else
                 {
-                    appendStringInfo(cur_buf, ")) FROM %s", child_table);
+                    appendStringInfo(cur_buf, ")) FROM %s", child_node->table_name);
                     if (where_clause)
                     {
                         appendStringInfo(cur_buf, " WHERE %s", where_clause);
@@ -135,8 +146,7 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
                         where_clause = NULL;
                     }
                 }
-                pfree(child_table);
-                child_table = NULL;
+                free_table_stack(&child_node);
                 break;
 
             case ',': // Next column
@@ -166,6 +176,8 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
             token = next_token;
             next_token = GET_TOKEN(&saveptr);
         } while (next_token && *next_token != '\0');
+        if (stack)
+            pg_hier_error_unmatched_braces();
         appendStringInfoString(cur_buf, ")));");
     }
     PG_FINALLY();
@@ -491,6 +503,8 @@ _parse_condition(StringInfo buf, char *field_name, char **saveptr, int *lvl)
 
     if (next_token == NULL)
         pg_hier_error_unexpected_end(operator);
+    else if (is_special_char(*next_token))
+        pg_hier_error_invalid_condition_value(next_token, operator);
     
     if (!strcmp(operator, "_eq")) 
     {

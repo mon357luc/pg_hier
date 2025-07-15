@@ -56,7 +56,7 @@ void free_string_array(string_array *arr);
 // No need for a init, table_stack *next is NULL on first call
 table_stack *create_table_stack_entry(char *table_name, table_stack *next);
 char *peek_table_stack(table_stack **stack);
-char *pop_table_stack(table_stack **stack);
+table_stack *pop_table_stack(table_stack **stack);
 void free_table_stack(table_stack **stack);
 
 hier_header *create_hier_header0(void);

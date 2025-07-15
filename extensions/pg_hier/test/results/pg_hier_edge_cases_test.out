@@ -1,0 +1,551 @@
+-- Edge cases and error handling tests for pg_hier functions
+
+-- Create the extension
+CREATE EXTENSION IF NOT EXISTS pg_hier;
+
+-- Set search path
+SET search_path TO taxon, public;
+
+-- Set up the hierarchical structure
+SELECT pg_hier_create_hier (
+    ARRAY ['kingdoms','phyla','classes','orders','families','genera','species'],
+    ARRAY [NULL::TEXT,'kingdom_id','phylum_id','class_id','order_id','family_id','genus_id'],
+    ARRAY [NULL::TEXT,'kingdom_id','phylum_id','class_id','order_id','family_id','genus_id']
+);
+                  pg_hier_create_hier                  
+-------------------------------------------------------
+ kingdoms.phyla.classes.orders.families.genera.species
+(1 row)
+
+
+-- Edge Case 1: Empty query string
+SELECT 'Edge Case 1: Empty query string' as test_case;
+            test_case            
+---------------------------------
+ Edge Case 1: Empty query string
+(1 row)
+
+SELECT pg_hier('') as result;
+ result 
+--------
+ 
+(1 row)
+
+
+-- Edge Case 2: Whitespace only
+SELECT 'Edge Case 2: Whitespace only' as test_case;
+          test_case           
+------------------------------
+ Edge Case 2: Whitespace only
+(1 row)
+
+SELECT pg_hier('   ') as result;
+ result 
+--------
+ 
+(1 row)
+
+
+-- Edge Case 3: Tab and newline whitespace
+SELECT 'Edge Case 3: Tab and newline whitespace' as test_case;
+                test_case                
+-----------------------------------------
+ Edge Case 3: Tab and newline whitespace
+(1 row)
+
+SELECT pg_hier('	
+   
+	') as result;
+ result 
+--------
+ 
+(1 row)
+
+
+-- Edge Case 4: Single character
+SELECT 'Edge Case 4: Single character' as test_case;
+           test_case           
+-------------------------------
+ Edge Case 4: Single character
+(1 row)
+
+SELECT pg_hier('a') as result;
+ERROR:  Unexpected end of input after operator 'a'
+
+-- Edge Case 5: Invalid JSON-like syntax
+SELECT 'Edge Case 5: Invalid JSON-like syntax' as test_case;
+               test_case               
+---------------------------------------
+ Edge Case 5: Invalid JSON-like syntax
+(1 row)
+
+SELECT pg_hier('{ invalid }') as result;
+ERROR:  Expected '[table name]' but got '{' while parsing input
+
+-- Edge Case 6: Unclosed braces
+SELECT 'Edge Case 6: Unclosed braces' as test_case;
+          test_case           
+------------------------------
+ Edge Case 6: Unclosed braces
+(1 row)
+
+SELECT pg_hier('orders { scientific_name') as result;
+ERROR:  Unmatched closing brace in input
+
+-- Edge Case 7: Mismatched braces
+SELECT 'Edge Case 7: Mismatched braces' as test_case;
+           test_case            
+--------------------------------
+ Edge Case 7: Mismatched braces
+(1 row)
+
+SELECT pg_hier('orders { scientific_name }}') as result;
+ERROR:  Unmatched closing brace in input
+
+-- Edge Case 8: Invalid table name
+SELECT 'Edge Case 8: Invalid table name' as test_case;
+            test_case            
+---------------------------------
+ Edge Case 8: Invalid table name
+(1 row)
+
+SELECT pg_hier('nonexistent_table { field1 }') as result;
+ERROR:  relation "nonexistent_table" does not exist
+LINE 1: ..._object('field1', nonexistent_table.field1)) FROM nonexisten...
+                                                             ^
+QUERY:  SELECT jsonb_agg(jsonb_build_object('nonexistent_table', (SELECT jsonb_agg(jsonb_build_object('field1', nonexistent_table.field1)) FROM nonexistent_table)));
+
+-- Edge Case 9: Invalid field names
+SELECT 'Edge Case 9: Invalid field names' as test_case;
+            test_case             
+----------------------------------
+ Edge Case 9: Invalid field names
+(1 row)
+
+SELECT pg_hier('orders { nonexistent_field }') as result;
+ERROR:  column orders.nonexistent_field does not exist
+LINE 1: ...jsonb_agg(jsonb_build_object('nonexistent_field', orders.non...
+                                                             ^
+QUERY:  SELECT jsonb_agg(jsonb_build_object('orders', (SELECT jsonb_agg(jsonb_build_object('nonexistent_field', orders.nonexistent_field)) FROM orders)));
+
+-- Edge Case 10: Missing field list
+SELECT 'Edge Case 10: Missing field list' as test_case;
+            test_case             
+----------------------------------
+ Edge Case 10: Missing field list
+(1 row)
+
+SELECT pg_hier('orders') as result;
+ERROR:  Unexpected end of input after operator 'orders'
+
+-- Edge Case 11: Empty field list
+SELECT 'Edge Case 11: Empty field list' as test_case;
+           test_case            
+--------------------------------
+ Edge Case 11: Empty field list
+(1 row)
+
+SELECT pg_hier('orders { }') as result;
+ERROR:  Empty column list in query
+
+-- Edge Case 12: Nested empty field list
+SELECT 'Edge Case 12: Nested empty field list' as test_case;
+               test_case               
+---------------------------------------
+ Edge Case 12: Nested empty field list
+(1 row)
+
+SELECT pg_hier('orders { families { } }') as result;
+ERROR:  Empty column list in query
+
+-- Edge Case 13: Invalid where clause syntax
+SELECT 'Edge Case 13: Invalid where clause syntax' as test_case;
+                 test_case                 
+-------------------------------------------
+ Edge Case 13: Invalid where clause syntax
+(1 row)
+
+SELECT pg_hier('orders ( where { invalid syntax } ) { scientific_name }') as result;
+ERROR:  Expected '{' but got 'syntax' while parsing invalid
+
+-- Edge Case 14: Malformed where conditions
+SELECT 'Edge Case 14: Malformed where conditions' as test_case;
+                test_case                 
+------------------------------------------
+ Edge Case 14: Malformed where conditions
+(1 row)
+
+SELECT pg_hier('orders ( where { order_id } ) { scientific_name }') as result;
+ERROR:  Expected '{' but got '}' while parsing order_id
+
+-- Edge Case 15: Invalid operator in where clause
+SELECT 'Edge Case 15: Invalid operator in where clause' as test_case;
+                   test_case                    
+------------------------------------------------
+ Edge Case 15: Invalid operator in where clause
+(1 row)
+
+SELECT pg_hier('orders ( where { order_id: { _invalid_op: 1 } } ) { scientific_name }') as result;
+ERROR:  Unknown operator '_invalid_op'
+
+-- Edge Case 16: Missing operator value
+SELECT 'Edge Case 16: Missing operator value' as test_case;
+              test_case               
+--------------------------------------
+ Edge Case 16: Missing operator value
+(1 row)
+
+SELECT pg_hier('orders ( where { order_id: { _eq: } } ) { scientific_name }') as result;
+ERROR:  Invalid condition value '}' for operator '_eq'
+
+-- Edge Case 17: Invalid nested structure
+SELECT 'Edge Case 17: Invalid nested structure' as test_case;
+               test_case                
+----------------------------------------
+ Edge Case 17: Invalid nested structure
+(1 row)
+
+SELECT pg_hier('orders { families { genera { invalid_nested_table { field } } } }') as result;
+ERROR:  No hierarchy data found for parent=genera, child=invalid_nested_table
+
+-- Edge Case 18: Circular reference attempt
+SELECT 'Edge Case 18: Circular reference attempt' as test_case;
+                test_case                 
+------------------------------------------
+ Edge Case 18: Circular reference attempt
+(1 row)
+
+SELECT pg_hier('orders { families { orders { scientific_name } } }') as result;
+ERROR:  No hierarchy data found for parent=families, child=orders
+
+-- Edge Case 19: Very long query string
+SELECT 'Edge Case 19: Very long query string' as test_case;
+              test_case               
+--------------------------------------
+ Edge Case 19: Very long query string
+(1 row)
+
+SELECT pg_hier(repeat('orders { scientific_name, common_name, ', 100) || repeat('} ', 100)) as result;
+ERROR:  No hierarchy data found for parent=orders, child=orders
+
+-- Edge Case 20: Special characters in field names
+SELECT 'Edge Case 20: Special characters in field names' as test_case;
+                    test_case                    
+-------------------------------------------------
+ Edge Case 20: Special characters in field names
+(1 row)
+
+SELECT pg_hier('orders { "scientific-name", scientific_name }') as result;
+ERROR:  column orders.scientific-name does not exist
+LINE 1: ...jsonb_agg(jsonb_build_object('"scientific-name"', orders."sc...
+                                                             ^
+HINT:  Perhaps you meant to reference the column "orders.scientific_name".
+QUERY:  SELECT jsonb_agg(jsonb_build_object('orders', (SELECT jsonb_agg(jsonb_build_object('"scientific-name"', orders."scientific-name", 'scientific_name', orders.scientific_name)) FROM orders)));
+
+-- Edge Case 21: Unicode characters
+SELECT 'Edge Case 21: Unicode characters' as test_case;
+            test_case             
+----------------------------------
+ Edge Case 21: Unicode characters
+(1 row)
+
+SELECT pg_hier('orders { scientific_name, "common_näme" }') as result;
+ERROR:  column orders.common_näme does not exist
+LINE 1: ...c_name', orders.scientific_name, '"common_näme"', orders."co...
+                                                             ^
+HINT:  Perhaps you meant to reference the column "orders.common_name".
+QUERY:  SELECT jsonb_agg(jsonb_build_object('orders', (SELECT jsonb_agg(jsonb_build_object('scientific_name', orders.scientific_name, '"common_näme"', orders."common_näme")) FROM orders)));
+
+-- Edge Case 22: SQL injection attempt
+SELECT 'Edge Case 22: SQL injection attempt' as test_case;
+              test_case              
+-------------------------------------
+ Edge Case 22: SQL injection attempt
+(1 row)
+
+SELECT pg_hier('orders { scientific_name; DROP TABLE orders; -- }') as result;
+ERROR:  syntax error at end of input
+LINE 1: ..., 'orders', orders.orders, '--', orders.--)) FROM orders)));
+                                                                       ^
+QUERY:  SELECT jsonb_agg(jsonb_build_object('orders', (SELECT jsonb_agg(jsonb_build_object('scientific_name', orders.scientific_name, 'DROP', orders.DROP, 'TABLE', orders.TABLE, 'orders', orders.orders, '--', orders.--)) FROM orders)));
+
+-- Edge Case 23: Single table with no relationships
+SELECT 'Edge Case 23: Single table with no relationships' as test_case;
+                    test_case                     
+--------------------------------------------------
+ Edge Case 23: Single table with no relationships
+(1 row)
+
+SELECT pg_hier('orders { scientific_name }') as result;
+                                                                                                                                                                            result                                                                                                                                                                             
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ [{"orders": [{"scientific_name": "Carnivora"}, {"scientific_name": "Primates"}, {"scientific_name": "Rodentia"}, {"scientific_name": "Passeriformes"}, {"scientific_name": "Squamata"}, {"scientific_name": "Anura"}, {"scientific_name": "Coleoptera"}, {"scientific_name": "Araneae"}, {"scientific_name": "Rosales"}, {"scientific_name": "Agaricales"}]}]
+(1 row)
+
+
+-- Edge Case 24: Invalid array syntax in where clause
+SELECT 'Edge Case 24: Invalid array syntax in where clause' as test_case;
+                     test_case                      
+----------------------------------------------------
+ Edge Case 24: Invalid array syntax in where clause
+(1 row)
+
+SELECT pg_hier('orders ( where { order_id: { _in: [1, 2, } } ) { scientific_name }') as result;
+ERROR:  Invalid condition value '[' for operator '_in'
+
+-- Edge Case 25: Mixed quote types
+SELECT 'Edge Case 25: Mixed quote types' as test_case;
+            test_case            
+---------------------------------
+ Edge Case 25: Mixed quote types
+(1 row)
+
+SELECT pg_hier($$orders ( where { scientific_name: { _eq: "Carnivora" } } ) { scientific_name }$$) as result;
+ERROR:  column "Carnivora" does not exist
+LINE 1: ...ntific_name)) FROM orders WHERE scientific_name = "Carnivora...
+                                                             ^
+QUERY:  SELECT jsonb_agg(jsonb_build_object('orders', (SELECT jsonb_agg(jsonb_build_object('scientific_name', orders.scientific_name)) FROM orders WHERE scientific_name = "Carnivora")));
+
+-- Test pg_hier_parse edge cases
+SELECT 'Parse Edge Case 1: NULL input' as test_case;
+           test_case           
+-------------------------------
+ Parse Edge Case 1: NULL input
+(1 row)
+
+SELECT pg_hier_parse(NULL) as result;
+ result 
+--------
+ 
+(1 row)
+
+
+-- Parse Edge Case 2: Empty string
+SELECT 'Parse Edge Case 2: Empty string' as test_case;
+            test_case            
+---------------------------------
+ Parse Edge Case 2: Empty string
+(1 row)
+
+SELECT pg_hier_parse('') as result;
+ result 
+--------
+ 
+(1 row)
+
+
+-- Parse Edge Case 3: Invalid syntax
+SELECT 'Parse Edge Case 3: Invalid syntax' as test_case;
+             test_case             
+-----------------------------------
+ Parse Edge Case 3: Invalid syntax
+(1 row)
+
+SELECT pg_hier_parse('invalid { syntax') as result;
+ERROR:  Unmatched closing brace in input
+
+-- Test pg_hier_join edge cases
+SELECT 'Join Edge Case 1: NULL parent' as test_case;
+           test_case           
+-------------------------------
+ Join Edge Case 1: NULL parent
+(1 row)
+
+SELECT pg_hier_join(NULL, 'species') as result;
+ result 
+--------
+ 
+(1 row)
+
+
+-- Join Edge Case 2: NULL child
+SELECT 'Join Edge Case 2: NULL child' as test_case;
+          test_case           
+------------------------------
+ Join Edge Case 2: NULL child
+(1 row)
+
+SELECT pg_hier_join('kingdoms', NULL) as result;
+ result 
+--------
+ 
+(1 row)
+
+
+-- Join Edge Case 3: Same table
+SELECT 'Join Edge Case 3: Same table' as test_case;
+          test_case           
+------------------------------
+ Join Edge Case 3: Same table
+(1 row)
+
+SELECT pg_hier_join('orders', 'orders') as result;
+ERROR:  No path found from orders to orders
+
+-- Join Edge Case 4: Non-existent tables
+SELECT 'Join Edge Case 4: Non-existent tables' as test_case;
+               test_case               
+---------------------------------------
+ Join Edge Case 4: Non-existent tables
+(1 row)
+
+SELECT pg_hier_join('nonexistent1', 'nonexistent2') as result;
+ERROR:  No path found from nonexistent1 to nonexistent2
+
+-- Join Edge Case 5: Reverse hierarchy
+SELECT 'Join Edge Case 5: Reverse hierarchy' as test_case;
+              test_case              
+-------------------------------------
+ Join Edge Case 5: Reverse hierarchy
+(1 row)
+
+SELECT pg_hier_join('species', 'kingdoms') as result;
+ERROR:  No path found from species to kingdoms
+
+-- Test pg_hier_format edge cases
+SELECT 'Format Edge Case 1: NULL query' as test_case;
+           test_case            
+--------------------------------
+ Format Edge Case 1: NULL query
+(1 row)
+
+SELECT pg_hier_format(NULL) as result;
+ result 
+--------
+ 
+(1 row)
+
+
+-- Format Edge Case 2: Empty query
+SELECT 'Format Edge Case 2: Empty query' as test_case;
+            test_case            
+---------------------------------
+ Format Edge Case 2: Empty query
+(1 row)
+
+SELECT pg_hier_format('') as result;
+ERROR:  SPI_execute failed: SPI_OK_REWRITTEN
+
+-- Format Edge Case 3: Invalid SQL
+SELECT 'Format Edge Case 3: Invalid SQL' as test_case;
+            test_case            
+---------------------------------
+ Format Edge Case 3: Invalid SQL
+(1 row)
+
+SELECT pg_hier_format('INVALID SQL STATEMENT') as result;
+ERROR:  syntax error at or near "INVALID"
+LINE 1: INVALID SQL STATEMENT
+        ^
+QUERY:  INVALID SQL STATEMENT
+
+-- Format Edge Case 4: Query with no results
+SELECT 'Format Edge Case 4: Query with no results' as test_case;
+                 test_case                 
+-------------------------------------------
+ Format Edge Case 4: Query with no results
+(1 row)
+
+SELECT pg_hier_format('SELECT * FROM orders WHERE order_id = -999') as result;
+ result 
+--------
+ {}
+(1 row)
+
+
+-- Memory and performance stress tests
+SELECT 'Stress Test 1: Deep nesting' as test_case;
+          test_case          
+-----------------------------
+ Stress Test 1: Deep nesting
+(1 row)
+
+SELECT LENGTH(pg_hier_parse($$
+kingdoms {
+    phyla {
+        classes {
+            orders {
+                families {
+                    genera {
+                        species {
+                            scientific_name
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+$$)) as result_length;
+ERROR:  pfree called with invalid pointer 0x55b50197782a (header 0x0a0d000000a00000)
+
+-- Test with maximum recursion depth
+SELECT 'Stress Test 2: Wide query' as test_case;
+         test_case         
+---------------------------
+ Stress Test 2: Wide query
+(1 row)
+
+SELECT LENGTH(pg_hier_parse($$
+orders {
+    order_id, scientific_name, common_name, description,
+    families {
+        family_id, scientific_name, common_name, description,
+        genera {
+            genus_id, scientific_name, common_name, description,
+            species {
+                species_id, scientific_name, common_name, description
+            }
+        }
+    }
+}
+$$)) as result_length;
+ERROR:  pfree called with invalid pointer 0x55b50197782a (header 0x0a0d000000a00000)
+
+-- Boundary condition tests
+SELECT 'Boundary Test 1: Single character table name' as test_case;
+                  test_case                   
+----------------------------------------------
+ Boundary Test 1: Single character table name
+(1 row)
+
+SELECT pg_hier_parse('a { scientific_name }') as result;
+                                                             result                                                              
+---------------------------------------------------------------------------------------------------------------------------------
+ SELECT jsonb_agg(jsonb_build_object('a', (SELECT jsonb_agg(jsonb_build_object('scientific_name', a.scientific_name)) FROM a)));
+(1 row)
+
+
+-- Test very long table name (if valid)
+SELECT 'Boundary Test 2: Long table name' as test_case;
+            test_case             
+----------------------------------
+ Boundary Test 2: Long table name
+(1 row)
+
+SELECT pg_hier_parse(repeat('a', 63) || ' { scientific_name }') as result;
+                                                                                                                                                          result                                                                                                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ SELECT jsonb_agg(jsonb_build_object('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', (SELECT jsonb_agg(jsonb_build_object('scientific_name', aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.scientific_name)) FROM aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)));
+(1 row)
+
+
+-- Test maximum number of fields
+SELECT 'Boundary Test 3: Many fields' as test_case;
+          test_case           
+------------------------------
+ Boundary Test 3: Many fields
+(1 row)
+
+SELECT LENGTH(pg_hier_parse('orders { ' || 
+    array_to_string(array_agg('field' || generate_series), ', ') || ' }'
+)) as result_length
+FROM generate_series(1, 100);
+ result_length 
+---------------
+          2783
+(1 row)
+
+
+-- Clean up
+DROP EXTENSION pg_hier CASCADE;
