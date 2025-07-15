@@ -402,6 +402,7 @@ int get_next_token(char *input_string, int i, char **token_return_param) {
     return i;
 }
 
+void insert_hier_detail(char *parent_name, char *child_name, char *key);
 PG_FUNCTION_INFO_V1(pg_hier_create_hier_nosuck);
 
 /**************************************
@@ -410,6 +411,8 @@ PG_FUNCTION_INFO_V1(pg_hier_create_hier_nosuck);
  * RETURNS text;
  * LANGUAGE C STRICT;
  **************************************/
+// Input is a series of lines like this:
+//     thing1 has child thing2 using common_key_name_here
 Datum pg_hier_create_hier_nosuck(PG_FUNCTION_ARGS)
 {
     if (PG_ARGISNULL(0))
@@ -442,12 +445,12 @@ Datum pg_hier_create_hier_nosuck(PG_FUNCTION_ARGS)
         i = get_next_token(input_string, i, &token);
         // NOTE no need to use the safer strncmp because get_next_token ensures
         // that the token is proper null-terminated
-        if (strcmp("has", token) != 0) {
-            elog(ERROR, "Expected 'has' after '%s' (position %d)", parent_name, i);
+        if (strcmp("has", token) != 0) { // TODO consider case insensitivity
+            elog(ERROR, "Expected 'has' after '%s', got '%s' (position %d)", parent_name, token, i);
         }
         i = get_next_token(input_string, i, &token);
         if (strcmp("child", token) != 0) {
-            elog(ERROR, "Expected 'child' after '%s has' (position %d)", parent_name, i);
+            elog(ERROR, "Expected 'child' after '%s has', got '%s' (position %d)", parent_name, token, i);
         }
         i = get_next_token(input_string, i, &child_name);
 
@@ -455,10 +458,7 @@ Datum pg_hier_create_hier_nosuck(PG_FUNCTION_ARGS)
         if (strcmp("using", token) == 0) {
             // expect 'key'
             i = get_next_token(input_string, i, &parent_key);
-            elog(INFO, "Parsed hierarchy relationship: '%s' has child '%s' using '%s'", parent_name, child_name, parent_key);
-            // TODO now we'll do some kind of SPI call like this:
-            // INSERT INTO pg_hier_detail (parent, child, parent_key, child_key) VALUES (parent_name, child_name, parent_key, parent_key);
-            // (once we know what the schema of that table is)
+            insert_hier_detail(parent_name, child_name, parent_key);
         } else if (strcmp("on", token) == 0) {
 
             elog(ERROR, "'on' not yet supported, use 'using' instead");
@@ -506,4 +506,43 @@ Datum pg_hier_create_hier_nosuck(PG_FUNCTION_ARGS)
     pfree(input_string);
 
     PG_RETURN_TEXT_P(cstring_to_text("Done :)")); // this return value is pointless
+}
+
+// Add "parent_name" as a parent of "child_name". You should call this twice if
+// you want bidirectional edges.
+void insert_hier_detail(char *parent_name, char *child_name, char *key) {
+    int ret;
+
+    elog(INFO, "Inserting hierarchy detail: '%s' has child '%s' using '%s'...", parent_name, child_name, key);
+
+    ret = SPI_connect();
+    if (ret != SPI_OK_CONNECT) {
+        elog(ERROR, "SPI_connect failed: %d", ret);
+    }
+
+    // char *query =
+    //     "UPDATE pg_hier_detail "
+    //     "SET "
+    //     "    parent_key = parent_key || ARRAY['$3'] "
+    //     " WHERE name = $1;";
+    char *query =
+        // "INSERT INTO pg_hier_header "
+        // "(id, table_path) "
+        // "VALUES (1, 'test') ON CONFLICT (id) DO NOTHING; "
+        "INSERT INTO pg_hier_detail2 "
+        "(hierarchy_id, name, parent_name, parent_key, child_key) "
+        "VALUES (69, $1, $2, $3, $3);"; // TODO actually handle hierarchy_id
+    Oid argtypes[3] = {TEXTOID, TEXTOID, TEXTOID};
+    Datum values[3] = {CStringGetTextDatum(child_name), CStringGetTextDatum(parent_name), CStringGetTextDatum(key)};
+    ret = SPI_execute_with_args(query, 3, argtypes, values, NULL, false, 0);
+
+    elog(INFO, "done inserting pg hier detail");
+
+    if (ret != SPI_OK_INSERT) {
+        SPI_finish();
+        elog(ERROR, "SPI_execute_with_args failed: %d", ret);
+        return;
+    }
+
+    SPI_finish();
 }

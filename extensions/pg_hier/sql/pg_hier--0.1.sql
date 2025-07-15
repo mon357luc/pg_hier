@@ -24,6 +24,16 @@ CREATE TABLE IF NOT EXISTS pg_hier_detail (
     child_key TEXT[]
 );
 
+CREATE TABLE IF NOT EXISTS pg_hier_detail2 (
+    id SERIAL PRIMARY KEY,
+    -- hierarchy_id INT NOT NULL REFERENCES pg_hier_header(id) ON DELETE CASCADE, 
+    hierarchy_id INT NOT NULL,
+    name TEXT NOT NULL,
+    parent_name TEXT, 
+    parent_key TEXT,
+    child_key TEXT
+);
+
  /**************************************
  * Table indexes
  **************************************/
