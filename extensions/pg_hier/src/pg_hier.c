@@ -1,4 +1,5 @@
 #include "pg_hier.h"
+#include "pg_hier_security.h"
 
 #ifdef PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
@@ -134,6 +135,7 @@ Datum pg_hier_join(PG_FUNCTION_ARGS)
     char *end_quote;
     char *colon;
     char *left_key;
+    char *escaped_first_table;
     Datum name_path_datum, key_path_datum;
     ArrayType *name_path_arr, *key_path_arr;
     int name_path_len;
@@ -145,6 +147,10 @@ Datum pg_hier_join(PG_FUNCTION_ARGS)
 
     parent_name = text_to_cstring(parent_name_text);
     child_name = text_to_cstring(child_name_text);
+
+    // Validate table names
+    VALIDATE_IDENTIFIER(parent_name, "parent table name");
+    VALIDATE_IDENTIFIER(child_name, "child table name");
 
     initStringInfo(&join_sql);
 
@@ -217,12 +223,27 @@ Datum pg_hier_join(PG_FUNCTION_ARGS)
                       &key_path_elems, &key_path_nulls, &key_path_count);
 
     resetStringInfo(&join_sql);
-    appendStringInfo(&join_sql, "FROM %s", TextDatumGetCString(name_path_elems[0]));
+    
+    escaped_first_table = ESCAPE_IDENTIFIER(TextDatumGetCString(name_path_elems[0]));
+    appendStringInfo(&join_sql, "FROM %s", escaped_first_table);
+    pfree(escaped_first_table);
 
     for (int i = 1; i < name_path_count; i++)
     {
+        char *escaped_join_table;
+        char *escaped_parent_table;
+        char *escaped_left_key;
+        char *escaped_right_key;
+        
         parent_table = pstrdup(TextDatumGetCString(name_path_elems[i - 1]));
         join_table = pstrdup(TextDatumGetCString(name_path_elems[i]));
+        
+        // Validate table names
+        VALIDATE_IDENTIFIER(parent_table, "parent table in join");
+        VALIDATE_IDENTIFIER(join_table, "join table in join");
+        
+        escaped_join_table = ESCAPE_IDENTIFIER(join_table);
+        
         key_json = TextDatumGetCString(key_path_elems[i]);
         key_array = key_json;
         while (*key_array && (*key_array == '[' || *key_array == ' '))
@@ -236,7 +257,7 @@ Datum pg_hier_join(PG_FUNCTION_ARGS)
         }
 
         pair = strtok_r(key_array, ",", &saveptr);
-        appendStringInfo(&join_sql, " JOIN %s ON ", join_table);
+        appendStringInfo(&join_sql, " JOIN %s ON ", escaped_join_table);
         key_idx = 0;
         while (pair)
         {
@@ -257,18 +278,36 @@ Datum pg_hier_join(PG_FUNCTION_ARGS)
             left_key = pair;
             right_key = colon + 1;
 
+            // Validate column names
+            VALIDATE_IDENTIFIER(left_key, "left key in join");
+            VALIDATE_IDENTIFIER(right_key, "right key in join");
+
             if (key_idx > 0)
                 appendStringInfoString(&join_sql, " AND ");
 
             pg_hier_info_table_check(TextDatumGetCString(name_path_elems[i]));
 
+            escaped_parent_table = ESCAPE_IDENTIFIER(parent_table);
+            escaped_left_key = ESCAPE_IDENTIFIER(left_key);
+            escaped_right_key = ESCAPE_IDENTIFIER(right_key);
+            
             appendStringInfo(&join_sql, "%s.%s = %s.%s",
-                             parent_table, left_key,
-                             join_table, right_key);
+                             escaped_parent_table, escaped_left_key,
+                             escaped_join_table, escaped_right_key);
+                             
+            pfree(escaped_parent_table);
+            pfree(escaped_left_key);
+            pfree(escaped_right_key);
 
             key_idx++;
             pair = strtok_r(NULL, ",", &saveptr);
         }
+        
+        pfree(escaped_join_table);
+        pfree(parent_table);
+        pfree(join_table);
+        parent_table = NULL;
+        join_table = NULL;
     }
     SPI_finish();
     PG_RETURN_TEXT_P(cstring_to_text(join_sql.data));
@@ -286,6 +325,7 @@ Datum pg_hier_format(PG_FUNCTION_ARGS)
 {
     text *sql;
     char *query;
+    char *trimmed;
     StringInfoData buf;
     int ret;
     bool format_isnull;
@@ -297,6 +337,28 @@ Datum pg_hier_format(PG_FUNCTION_ARGS)
     sql = PG_GETARG_TEXT_PP(0);
     query = text_to_cstring(sql);
 
+    // Basic SQL injection prevention - reject dangerous patterns
+    if (strstr(query, ";") || strstr(query, "--") || 
+        pg_strcasecmp(query, "DROP") || pg_strcasecmp(query, "DELETE") ||
+        pg_strcasecmp(query, "UPDATE") || pg_strcasecmp(query, "INSERT") ||
+        pg_strcasecmp(query, "CREATE") || pg_strcasecmp(query, "ALTER") ||
+        pg_strcasecmp(query, "TRUNCATE") || pg_strcasecmp(query, "EXECUTE"))
+    {
+        PG_HIER_ERROR(ERRCODE_PG_HIER_INVALID_INPUT,
+            "Only SELECT statements are allowed in pg_hier_format");
+    }
+
+    // Ensure it starts with SELECT (case insensitive)
+    trimmed = query;
+    while (*trimmed && isspace((unsigned char)*trimmed))
+        trimmed++;
+    
+    if (pg_strncasecmp(trimmed, "SELECT", 6) != 0)
+    {
+        PG_HIER_ERROR(ERRCODE_PG_HIER_INVALID_INPUT,
+            "Query must start with SELECT statement");
+    }
+
     initStringInfo(&buf);
     appendStringInfoChar(&buf, '{');
 
@@ -304,6 +366,7 @@ Datum pg_hier_format(PG_FUNCTION_ARGS)
     if (ret != SPI_OK_CONNECT)
         pg_hier_error_spi_connect(ret);
 
+    // Execute with read-only transaction
     ret = SPI_execute(query, true, 0);
     if (ret != SPI_OK_SELECT)
     {

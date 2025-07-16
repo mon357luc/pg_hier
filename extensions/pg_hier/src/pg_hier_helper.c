@@ -51,6 +51,7 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
             {
             case '(': // Begin where clause
                 child_table = pstrdup(token);
+                VALIDATE_IDENTIFIER(child_table, "table name in where clause");
                 add_string_to_array(*tables, child_table);
                 stack = create_table_stack_entry(child_table, stack);
 
@@ -79,6 +80,7 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
                 if (strcmp(token, ")"))
                 {
                     child_table = pstrdup(token);
+                    VALIDATE_IDENTIFIER(child_table, "table name");
                     add_string_to_array(*tables, child_table);
                     stack = create_table_stack_entry(child_table, stack);
                 }
@@ -89,6 +91,7 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
 
                 if (stack->next && !stack->next->first_column)
                     appendStringInfoString(cur_buf, ", ");
+
                 appendStringInfo(cur_buf, "'%s', (SELECT jsonb_agg(jsonb_build_object(", child_table);
 
                 pfree(child_table);
@@ -98,11 +101,20 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
             case '}':
                 if (!is_special_char(*token))
                 {
+                    char *escaped_column;
+                    char *escaped_table;
+                    
                     if (stack && !stack->first_column)
                         appendStringInfoString(cur_buf, ", ");
                     else
                         stack->first_column = false;
-                    appendStringInfo(cur_buf, "'%s', %s.%s", token, stack->table_name, token);
+                    
+                    VALIDATE_IDENTIFIER(token, "column name");
+                    escaped_column = ESCAPE_IDENTIFIER(token);
+                    escaped_table = ESCAPE_IDENTIFIER(stack->table_name);
+                    appendStringInfo(cur_buf, "'%s', %s.%s", token, escaped_table, escaped_column);
+                    pfree(escaped_column);
+                    pfree(escaped_table);
                 } 
                 else if (!strcmp(token, "{"))
                 {
@@ -138,13 +150,15 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
                 }
                 else
                 {
-                    appendStringInfo(cur_buf, ")) FROM %s", child_node->table_name);
+                    char *escaped_table = ESCAPE_IDENTIFIER(child_node->table_name);
+                    appendStringInfo(cur_buf, ")) FROM %s", escaped_table);
                     if (where_clause)
                     {
                         appendStringInfo(cur_buf, " WHERE %s", where_clause);
                         pfree(where_clause);
                         where_clause = NULL;
                     }
+                    pfree(escaped_table);
                 }
                 free_table_stack(&child_node);
                 break;
@@ -164,12 +178,28 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
                 }
                 else if (!stack->first_column)
                 {
-                    appendStringInfo(cur_buf, ", '%s', %s.%s", token, stack->table_name, token);
+                    char *escaped_column;
+                    char *escaped_table;
+                    
+                    VALIDATE_IDENTIFIER(token, "column name");
+                    escaped_column = ESCAPE_IDENTIFIER(token);
+                    escaped_table = ESCAPE_IDENTIFIER(stack->table_name);
+                    appendStringInfo(cur_buf, ", '%s', %s.%s", token, escaped_table, escaped_column);
+                    pfree(escaped_column);
+                    pfree(escaped_table);
                 }
                 else
                 {
-                    appendStringInfo(cur_buf, "'%s', %s.%s", token, stack->table_name, token);
+                    char *escaped_column;
+                    char *escaped_table;
+                    
+                    VALIDATE_IDENTIFIER(token, "column name");
+                    escaped_column = ESCAPE_IDENTIFIER(token);
+                    escaped_table = ESCAPE_IDENTIFIER(stack->table_name);
+                    appendStringInfo(cur_buf, "'%s', %s.%s", token, escaped_table, escaped_column);
                     stack->first_column = false;
+                    pfree(escaped_column);
+                    pfree(escaped_table);
                 }
                 break;
             }
@@ -291,6 +321,7 @@ pg_hier_find_hier(string_array *tables, hier_header *hh)
     StringInfoData query;
     uint64 hier_id = 0;
     int ret;
+    char *sanitized_pattern;
 
     if (tables == NULL || tables->size < 2)
         pg_hier_error_insufficient_path_elements();
@@ -298,10 +329,14 @@ pg_hier_find_hier(string_array *tables, hier_header *hh)
     initStringInfo(&query);
     appendStringInfo(&query, "SELECT id, table_path FROM pg_hier_header WHERE ");
     for (int i = 0; i < tables->size; i++)
+    {
+        VALIDATE_IDENTIFIER(tables->data[i], "table name in hierarchy search");
+        sanitized_pattern = pg_hier_sanitize_like_pattern(tables->data[i]);
         appendStringInfo(&query,
-                         (
-                             (i > 0) ? " AND table_path LIKE '%%%s%%'" : "table_path LIKE '%%%s%%'"),
-                         tables->data[i]);
+                         (i > 0) ? " AND table_path LIKE %s" : "table_path LIKE %s",
+                         sanitized_pattern);
+        pfree(sanitized_pattern);
+    }
 
     PG_TRY();
     {
@@ -409,20 +444,12 @@ _and_operator(StringInfo buf, char **saveptr, int *lvl)
         else
             first_condition = false;
 
-        // Check if it's a nested operator
         if (!strcmp(next_token, "_and") || !strcmp(next_token, "and"))
-        {
             _and_operator(buf, saveptr, lvl);
-        }
         else if (!strcmp(next_token, "_or") || !strcmp(next_token, "or"))
-        {
             _or_operator(buf, saveptr, lvl);
-        }
         else
-        {
-            // It's a field name, parse the condition
             _parse_condition(buf, next_token, saveptr, lvl);
-        }
         
         next_token = GET_TOKEN(saveptr);
     }
@@ -455,20 +482,12 @@ _or_operator(StringInfo buf, char **saveptr, int *lvl)
         else
             first_condition = false;
 
-        // Check if it's a nested operator
         if (!strcmp(next_token, "_and") || !strcmp(next_token, "and"))
-        {
             _and_operator(buf, saveptr, lvl);
-        }
         else if (!strcmp(next_token, "_or") || !strcmp(next_token, "or"))
-        {
             _or_operator(buf, saveptr, lvl);
-        }
         else
-        {
-            // It's a field name, parse the condition
             _parse_condition(buf, next_token, saveptr, lvl);
-        }
 
         next_token = GET_TOKEN(saveptr);
     }
@@ -482,6 +501,12 @@ _parse_condition(StringInfo buf, char *field_name, char **saveptr, int *lvl)
 {
     char *next_token;
     char *operator;
+    char *escaped_field;
+    char *escaped_value;
+    
+    // Validate field name to prevent injection
+    VALIDATE_IDENTIFIER(field_name, "field name");
+    escaped_field = ESCAPE_IDENTIFIER(field_name);
     
     next_token = GET_TOKEN(saveptr);
 
@@ -508,67 +533,103 @@ _parse_condition(StringInfo buf, char *field_name, char **saveptr, int *lvl)
     
     if (!strcmp(operator, "_eq")) 
     {
-        appendStringInfo(buf, "%s = %s", field_name, next_token);
+        escaped_value = ESCAPE_LITERAL(next_token);
+        appendStringInfo(buf, "%s = %s", escaped_field, escaped_value);
+        pfree(escaped_value);
     } 
     else if (!strcmp(operator, "_like")) 
     {
-        appendStringInfo(buf, "%s LIKE %s", field_name, next_token);
+        escaped_value = ESCAPE_LITERAL(next_token);
+        appendStringInfo(buf, "%s LIKE %s", escaped_field, escaped_value);
+        pfree(escaped_value);
     }
     else if (!strcmp(operator, "_gt")) 
     {
-        appendStringInfo(buf, "%s > %s", field_name, next_token);
+        escaped_value = ESCAPE_LITERAL(next_token);
+        appendStringInfo(buf, "%s > %s", escaped_field, escaped_value);
+        pfree(escaped_value);
     }
     else if (!strcmp(operator, "_lt")) 
     {
-        appendStringInfo(buf, "%s < %s", field_name, next_token);
+        escaped_value = ESCAPE_LITERAL(next_token);
+        appendStringInfo(buf, "%s < %s", escaped_field, escaped_value);
+        pfree(escaped_value);
     }
     else if (!strcmp(operator, "_in")) 
     {
-        appendStringInfo(buf, "%s IN (%s)", field_name, next_token);
+        // For IN operator, we need to validate that it's a proper list
+        // For now, we'll escape it as a literal and trust PostgreSQL's parser
+        escaped_value = ESCAPE_LITERAL(next_token);
+        appendStringInfo(buf, "%s IN (%s)", escaped_field, escaped_value);
+        pfree(escaped_value);
     } 
     else if (!strcmp(operator, "_not_in")) 
     {
-        appendStringInfo(buf, "%s NOT IN (%s)", field_name, next_token);
+        escaped_value = ESCAPE_LITERAL(next_token);
+        appendStringInfo(buf, "%s NOT IN (%s)", escaped_field, escaped_value);
+        pfree(escaped_value);
     } 
     else if (!strcmp(operator, "_is_null")) 
     {
-        appendStringInfo(buf, "%s IS NULL", field_name);
+        appendStringInfo(buf, "%s IS NULL", escaped_field);
     } 
     else if (!strcmp(operator, "_is_not_null")) 
     {
-        appendStringInfo(buf, "%s IS NOT NULL", field_name);
+        appendStringInfo(buf, "%s IS NOT NULL", escaped_field);
     }
     else if (!strcmp(operator, "_between")) 
     {
+        char *escaped_lower;
+        char *escaped_upper;
         char *lower_bound = GET_TOKEN(saveptr);
         char *upper_bound = GET_TOKEN(saveptr);
         if (lower_bound == NULL || upper_bound == NULL)
             pg_hier_error_invalid_between_values(lower_bound, upper_bound);
-        appendStringInfo(buf, "%s BETWEEN %s AND %s", field_name, lower_bound, upper_bound);
+        
+        escaped_lower = ESCAPE_LITERAL(lower_bound);
+        escaped_upper = ESCAPE_LITERAL(upper_bound);
+        appendStringInfo(buf, "%s BETWEEN %s AND %s", escaped_field, escaped_lower, escaped_upper);
+        pfree(escaped_lower);
+        pfree(escaped_upper);
     }
     else if (!strcmp(operator, "_not_between")) 
     {
+        char *escaped_lower;
+        char *escaped_upper;
         char *lower_bound = GET_TOKEN(saveptr);
         char *upper_bound = GET_TOKEN(saveptr);
         if (lower_bound == NULL || upper_bound == NULL)
             pg_hier_error_invalid_between_values(lower_bound, upper_bound);
-        appendStringInfo(buf, "%s NOT BETWEEN %s AND %s", field_name, lower_bound, upper_bound);
+        
+        escaped_lower = ESCAPE_LITERAL(lower_bound);
+        escaped_upper = ESCAPE_LITERAL(upper_bound);
+        appendStringInfo(buf, "%s NOT BETWEEN %s AND %s", escaped_field, escaped_lower, escaped_upper);
+        pfree(escaped_lower);
+        pfree(escaped_upper);
     }
     else if (!strcmp(operator, "_exists")) 
     {
-        appendStringInfo(buf, "EXISTS (SELECT 1 FROM %s WHERE %s)", next_token, field_name);
+        char *escaped_table;
+        VALIDATE_IDENTIFIER(next_token, "EXISTS table name");
+        escaped_table = ESCAPE_IDENTIFIER(next_token);
+        appendStringInfo(buf, "EXISTS (SELECT 1 FROM %s WHERE %s IS NOT NULL)", escaped_table, escaped_field);
+        pfree(escaped_table);
     } 
     else if (!strcmp(operator, "_not_exists")) 
     {
-        appendStringInfo(buf, "NOT EXISTS (SELECT 1 FROM %s WHERE %s)", next_token, field_name);
+        char *escaped_table;
+        VALIDATE_IDENTIFIER(next_token, "NOT EXISTS table name");
+        escaped_table = ESCAPE_IDENTIFIER(next_token);
+        appendStringInfo(buf, "NOT EXISTS (SELECT 1 FROM %s WHERE %s IS NOT NULL)", escaped_table, escaped_field);
+        pfree(escaped_table);
     } 
     else if (!strcmp(operator, "_is_true")) 
     {
-        appendStringInfo(buf, "%s IS TRUE", field_name);
+        appendStringInfo(buf, "%s IS TRUE", escaped_field);
     } 
     else if (!strcmp(operator, "_is_false")) 
     {
-        appendStringInfo(buf, "%s IS FALSE", field_name);
+        appendStringInfo(buf, "%s IS FALSE", escaped_field);
     }
     else 
     {
@@ -580,6 +641,7 @@ _parse_condition(StringInfo buf, char *field_name, char **saveptr, int *lvl)
         pg_hier_error_expected_token("}", next_token, "condition");
 
     (*lvl)--;
+    pfree(escaped_field);
 }
 
 void 
@@ -803,6 +865,8 @@ pg_hier_return_one(const char *sql)
 {
     int ret;
     Datum result = (Datum)NULL;
+    bool isnull;
+    Datum val;
 
     if ((ret = SPI_connect()) < 0)
         pg_hier_error_spi_connect(ret);
@@ -819,8 +883,7 @@ pg_hier_return_one(const char *sql)
     {
         if (SPI_tuptable->vals[0] != NULL)
         {
-            bool isnull;
-            Datum val = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
+            val = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
 
             if (!isnull)
                 result = datumCopy(val, false, -1);

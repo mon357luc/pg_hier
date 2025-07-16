@@ -5,6 +5,7 @@
 #include "pg_hier_structs.h"
 #include "pg_hier_sql.h"
 #include "pg_hier_errors.h"
+#include "pg_hier_security.h"
 
 void parse_input(StringInfo buf, const char *input, string_array **tables);
 
