@@ -350,6 +350,16 @@ get_next_token(char **saveptr)
     result = palloc(len + 1);
     strncpy(result, start, len);
     result[len] = '\0';
+
+    if (!pg_strcasecmp(result, "DROP") || !pg_strcasecmp(result, "DELETE") ||
+        !pg_strcasecmp(result, "UPDATE") || !pg_strcasecmp(result, "INSERT") ||
+        !pg_strcasecmp(result, "CREATE") || !pg_strcasecmp(result, "ALTER") ||
+        !pg_strcasecmp(result, "TRUNCATE") || !pg_strcasecmp(result, "EXECUTE"))
+    {
+        PG_HIER_ERROR(ERRCODE_PG_HIER_INVALID_INPUT,
+            "Only SELECT statements are allowed in pg_hier_format");
+    }
+
     *saveptr = s;
 
     return result;
