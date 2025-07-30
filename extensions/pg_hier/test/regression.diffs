@@ -1,9 +1,0 @@
-diff -U3 /extensions_src/pg_hier/test/expected/setup_taxon_schema.out /extensions_src/pg_hier/test/results/setup_taxon_schema.out
---- /extensions_src/pg_hier/test/expected/setup_taxon_schema.out	2025-07-15 02:48:15.790734900 +0000
-+++ /extensions_src/pg_hier/test/results/setup_taxon_schema.out	2025-07-16 04:06:10.866647700 +0000
-@@ -286,4 +286,4 @@
- ('Pinus pinaster', 'Maritime pine', 17, 'Pine native to the Mediterranean'),
- ('Pinus pinea', 'Stone pine', 17, 'Pine that produces edible pine nuts'),
- ('Amanita verna', 'Fool''s mushroom', 18, 'Deadly poisonous white mushroom'),
--('Amanita citrina', 'False death cap', 18, 'Yellow-tinged mushroom');
-+('Amanita citrina', 'False death cap', 18, 'Yellow-tinged mushroom');

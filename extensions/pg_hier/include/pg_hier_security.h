@@ -4,6 +4,7 @@
 #include "pg_hier_dependencies.h"
 
 /* Security validation functions */
+void validate_input_security(const char *input);
 bool pg_hier_is_valid_identifier(const char *name);
 char *pg_hier_escape_identifier(const char *name);
 char *pg_hier_escape_literal(const char *value);

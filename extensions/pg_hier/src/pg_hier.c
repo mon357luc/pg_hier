@@ -48,10 +48,8 @@ Datum pg_hier(PG_FUNCTION_ARGS)
     }
 
     free_string_array(tables);
-    pfree(input);
-
+    
     result = pg_hier_return_one(parse_buf.data);
-
     pfree(parse_buf.data);
 
     PG_RETURN_DATUM(result);
@@ -88,12 +86,10 @@ Datum pg_hier_parse(PG_FUNCTION_ARGS)
 
     if (tables == NULL)
     {
-        pfree(input);
-        pfree(parse_buf.data);
+        free_string_array(tables);
         pg_hier_error_no_tables();
     }
     free_string_array(tables);
-    pfree(input);
 
     PG_RETURN_TEXT_P(cstring_to_text(parse_buf.data));
 }

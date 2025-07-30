@@ -1,6 +1,50 @@
 #include "pg_hier_helper.h"
 
 /**************************************
+ * Security validation functions
+ **************************************/
+void
+validate_input_security(const char *input)
+{
+    const char *s = input;
+    
+    if (!input)
+        return;
+        
+    while (*s)
+    {
+        // Check for SQL line comments
+        if (*s == '-' && *(s + 1) == '-')
+        {
+            ereport(ERROR, 
+                    (errcode(ERRCODE_SYNTAX_ERROR),
+                     errmsg("SQL line comments (--) are not allowed in pg_hier input"),
+                     errhint("Remove any comment syntax from your hierarchical query")));
+        }
+        
+        // Check for SQL block comments
+        if (*s == '/' && *(s + 1) == '*')
+        {
+            ereport(ERROR, 
+                    (errcode(ERRCODE_SYNTAX_ERROR),
+                     errmsg("SQL block comments (/* */) are not allowed in pg_hier input"),
+                     errhint("Remove any comment syntax from your hierarchical query")));
+        }
+        
+        // Check for other potentially dangerous patterns
+        if (*s == ';' && *(s + 1) && !isspace(*(s + 1)))
+        {
+            ereport(ERROR, 
+                    (errcode(ERRCODE_SYNTAX_ERROR),
+                     errmsg("Multiple SQL statements are not allowed in pg_hier input"),
+                     errhint("Use only single hierarchical query syntax")));
+        }
+        
+        s++;
+    }
+}
+
+/**************************************
  * Input parsing function
  *
  * This function parses the input
@@ -31,6 +75,8 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
 
     PG_TRY();
     {
+        validate_input_security(input);
+        
         *tables = create_string_array();
         hh = CREATE_HIER_HEADER();
         input_copy = pstrdup(input);
@@ -206,6 +252,7 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
             token = next_token;
             next_token = GET_TOKEN(&saveptr);
         } while (next_token && *next_token != '\0');
+
         if (stack)
             pg_hier_error_unmatched_braces();
         appendStringInfoString(cur_buf, ")));");
@@ -215,6 +262,7 @@ parse_input(StringInfo buf, const char *input, string_array **tables)
         MemoryContextSwitchTo(old_context);
     }
     PG_END_TRY();
+
 }
 
 char *
@@ -247,6 +295,23 @@ get_next_token(char **saveptr)
         return NULL;
     }
 
+    // Security check: Detect SQL comments and reject them
+    if (*s == '-' && *(s + 1) == '-')
+    {
+        ereport(ERROR, 
+                (errcode(ERRCODE_SYNTAX_ERROR),
+                 errmsg("SQL line comments (--) are not allowed in pg_hier input"),
+                 errhint("Remove any comment syntax from your hierarchical query")));
+    }
+    
+    if (*s == '/' && *(s + 1) == '*')
+    {
+        ereport(ERROR, 
+                (errcode(ERRCODE_SYNTAX_ERROR),
+                 errmsg("SQL block comments (/* */) are not allowed in pg_hier input"),
+                 errhint("Remove any comment syntax from your hierarchical query")));
+    }
+
     if (is_special_char(*s))
     {
         char *tok = s;
@@ -261,12 +326,40 @@ get_next_token(char **saveptr)
     // Handle regular tokens
     start = s;
     while (*s && !isspace((unsigned char)*s) && !is_special_char(*s))
+    {
+        // Additional security check within tokens for embedded comments
+        if (*s == '-' && *(s + 1) == '-')
+        {
+            ereport(ERROR, 
+                    (errcode(ERRCODE_SYNTAX_ERROR),
+                     errmsg("SQL line comments (--) are not allowed in pg_hier input"),
+                     errhint("Remove any comment syntax from your hierarchical query")));
+        }
+        
+        if (*s == '/' && *(s + 1) == '*')
+        {
+            ereport(ERROR, 
+                    (errcode(ERRCODE_SYNTAX_ERROR),
+                     errmsg("SQL block comments (/* */) are not allowed in pg_hier input"),
+                     errhint("Remove any comment syntax from your hierarchical query")));
+        }
         s++;
+    }
 
     len = s - start;
     result = palloc(len + 1);
     strncpy(result, start, len);
     result[len] = '\0';
+
+    if (!pg_strcasecmp(result, "DROP") || !pg_strcasecmp(result, "DELETE") ||
+        !pg_strcasecmp(result, "UPDATE") || !pg_strcasecmp(result, "INSERT") ||
+        !pg_strcasecmp(result, "CREATE") || !pg_strcasecmp(result, "ALTER") ||
+        !pg_strcasecmp(result, "TRUNCATE") || !pg_strcasecmp(result, "EXECUTE"))
+    {
+        PG_HIER_ERROR(ERRCODE_PG_HIER_INVALID_INPUT,
+            "Only SELECT statements are allowed in pg_hier_format");
+    }
+
     *saveptr = s;
 
     return result;
